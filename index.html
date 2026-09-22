@@ -104,6 +104,21 @@
   #modalBox .row button{padding:7px 14px;}
   #modalBox .row button.secondary{background:#2a2a2a;color:#eee;}
   #modalBox .row button.secondary:hover{background:#3a3a3a;}
+
+  #canvasListOverlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:2000;}
+  #canvasListOverlay.open{display:flex;}
+  #canvasListBox{background:var(--panel);border:1px solid #333;border-radius:10px;padding:18px;width:380px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 12px 32px rgba(0,0,0,.6);}
+  #canvasListBox h4{margin:0 0 10px;font-size:14px;color:var(--text);}
+  #canvasListItems{overflow-y:auto;flex:1;margin-bottom:12px;min-height:40px;}
+  .canvas-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 8px;border-radius:6px;cursor:pointer;}
+  .canvas-item:hover{background:#252525;}
+  .canvas-item-main{overflow:hidden;flex:1;}
+  .canvas-item-name{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .canvas-item-date{font-size:11px;color:var(--muted);margin-top:2px;}
+  .canvas-item-del{background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:4px 7px;border-radius:4px;flex-shrink:0;}
+  .canvas-item-del:hover{background:#c0392b;color:#fff;}
+  #canvasListBox .row{display:flex;gap:8px;justify-content:flex-end;}
+  #canvasListBox .row button{padding:7px 14px;}
 </style>
 </head>
 <body>
@@ -114,7 +129,6 @@
   <button id="libraryBtn" class="secondary">Library</button>
   <button id="saveBtn" class="secondary">Save canvas</button>
   <button id="openBtn" class="secondary">Open canvas</button>
-  <input id="openInput" type="file" accept="application/json" style="display:none">
   <button id="authBtn" class="secondary">Connect Spotify</button>
   <span id="status">Not connected</span>
   <div id="hint">Scroll to pan · Ctrl/⌘+scroll or pinch to zoom · Drag a card header to move</div>
@@ -133,6 +147,16 @@
     <div class="row">
       <button id="modalCancelBtn" class="secondary">Cancel</button>
       <button id="modalOkBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="canvasListOverlay">
+  <div id="canvasListBox">
+    <h4>Your saved canvases</h4>
+    <div id="canvasListItems"></div>
+    <div class="row">
+      <button id="canvasListCloseBtn" class="secondary">Close</button>
     </div>
   </div>
 </div>
@@ -192,7 +216,6 @@
   const addTextBtn = document.getElementById('addTextBtn');
   const saveBtn = document.getElementById('saveBtn');
   const openBtn = document.getElementById('openBtn');
-  const openInput = document.getElementById('openInput');
   const zoomControls = document.getElementById('zoomControls');
   const zoomInBtn = document.getElementById('zoomInBtn');
   const zoomOutBtn = document.getElementById('zoomOutBtn');
@@ -203,6 +226,9 @@
   const modalInput = document.getElementById('modalInput');
   const modalCancelBtn = document.getElementById('modalCancelBtn');
   const modalOkBtn = document.getElementById('modalOkBtn');
+  const canvasListOverlay = document.getElementById('canvasListOverlay');
+  const canvasListItems = document.getElementById('canvasListItems');
+  const canvasListCloseBtn = document.getElementById('canvasListCloseBtn');
 
   // Small in-app replacements for window.prompt()/alert(): some embedded/preview
   // browser contexts refuse native dialogs outright, and even where supported
@@ -254,6 +280,28 @@
       }
       function onOk(){ cleanup(); }
       modalOkBtn.addEventListener('click', onOk);
+    });
+  }
+  function confirmModal(title, message, okLabel){
+    return new Promise(resolve => {
+      modalTitle.textContent = title;
+      modalMsg.textContent = message;
+      modalMsg.style.display = '';
+      modalInput.style.display = 'none';
+      modalCancelBtn.style.display = '';
+      modalOkBtn.textContent = okLabel || 'OK';
+      modalOverlay.classList.add('open');
+      modalOkBtn.focus();
+      function cleanup(result){
+        modalOverlay.classList.remove('open');
+        modalOkBtn.removeEventListener('click', onOk);
+        modalCancelBtn.removeEventListener('click', onCancel);
+        resolve(result);
+      }
+      function onOk(){ cleanup(true); }
+      function onCancel(){ cleanup(false); }
+      modalOkBtn.addEventListener('click', onOk);
+      modalCancelBtn.addEventListener('click', onCancel);
     });
   }
 
@@ -1014,42 +1062,103 @@
     else if(e.key === '0'){ e.preventDefault(); zoomAtCenter(1); }
   });
 
-  // ---------- Save / open canvas files ----------
+  // ---------- Save / open canvases (kept within the site's own storage — no file
+  // downloads/uploads). Named snapshots live in their own localStorage entry
+  // (LIBRARY_KEY), separate from the always-on autosave of whatever canvas is
+  // currently open (STORAGE_KEY, via saveState() elsewhere in this file). ----------
+  const LIBRARY_KEY = 'spotify-canvas-library-v1';
+  let currentCanvasId = null;
+  let currentCanvasName = null;
+
+  function getLibrary(){
+    try{ return JSON.parse(localStorage.getItem(LIBRARY_KEY) || '{}'); }catch(e){ return {}; }
+  }
+  function setLibrary(lib){
+    try{ localStorage.setItem(LIBRARY_KEY, JSON.stringify(lib)); }catch(e){}
+  }
+  function escapeHtml(s){
+    return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
   saveBtn.addEventListener('click', async () => {
-    const name = await promptModal('Name this canvas file', 'my-canvas');
+    const name = await promptModal('Name this canvas', currentCanvasName || 'My canvas');
     if(name === null) return;
-    const payload = { app: 'spotify-canvas', version: 1, camX, camY, camZoom, cards: serializeCards() };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const safeName = (name.trim() || 'canvas').replace(/[^a-z0-9\-_ ]/gi, '').trim() || 'canvas';
-    a.href = url; a.download = safeName + '.json';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const trimmed = name.trim() || 'My canvas';
+    const lib = getLibrary();
+
+    let targetId;
+    if(currentCanvasId && lib[currentCanvasId] && lib[currentCanvasId].name.toLowerCase() === trimmed.toLowerCase()){
+      targetId = currentCanvasId;
+    } else {
+      const existingId = Object.keys(lib).find(id => lib[id].name.toLowerCase() === trimmed.toLowerCase());
+      if(existingId){
+        const ok = await confirmModal('Overwrite canvas', `A saved canvas named "${trimmed}" already exists. Overwrite it?`, 'Overwrite');
+        if(!ok) return;
+        targetId = existingId;
+      } else {
+        targetId = 'cv' + Date.now() + '_' + Math.floor(Math.random()*1e6);
+      }
+    }
+
+    lib[targetId] = { id: targetId, name: trimmed, savedAt: Date.now(), camX, camY, camZoom, cards: serializeCards() };
+    setLibrary(lib);
+    currentCanvasId = targetId;
+    currentCanvasName = trimmed;
   });
 
-  openBtn.addEventListener('click', () => openInput.click());
-  openInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      let data;
-      try{ data = JSON.parse(reader.result); }
-      catch(err){ await alertModal('Could not read that file — is it a canvas file saved from this app?'); openInput.value = ''; return; }
-      clearCanvas();
-      const list = Array.isArray(data.cards) ? data.cards : (Array.isArray(data) ? data : []);
-      list.forEach(c => { idCounter++; makeCard(c.id || ('c'+idCounter+'_'+Date.now()), c, c.x||0, c.y||0); });
-      emptyState.style.display = Object.keys(cards).length ? 'none' : 'block';
-      if(typeof data.camZoom === 'number'){
-        camX = data.camX||0; camY = data.camY||0; camZoom = data.camZoom;
-        applyTransform();
-      }
-      saveState();
-      openInput.value = '';
-    };
-    reader.readAsText(file);
-  });
+  function loadFromLibrary(id){
+    const lib = getLibrary();
+    const entry = lib[id];
+    if(!entry) return;
+    clearCanvas();
+    (entry.cards || []).forEach(c => { idCounter++; makeCard(c.id || ('c'+idCounter+'_'+Date.now()), c, c.x||0, c.y||0); });
+    emptyState.style.display = Object.keys(cards).length ? 'none' : 'block';
+    if(typeof entry.camZoom === 'number'){
+      camX = entry.camX||0; camY = entry.camY||0; camZoom = entry.camZoom;
+      applyTransform();
+    }
+    currentCanvasId = id;
+    currentCanvasName = entry.name;
+    saveState();
+    canvasListOverlay.classList.remove('open');
+  }
+
+  function renderCanvasList(){
+    const lib = getLibrary();
+    const ids = Object.keys(lib).sort((a,b) => (lib[b].savedAt||0) - (lib[a].savedAt||0));
+    canvasListItems.innerHTML = '';
+    if(!ids.length){
+      canvasListItems.innerHTML = '<div style="color:#888;font-size:12px;padding:10px 2px;">No saved canvases yet — use "Save canvas" to create one.</div>';
+      return;
+    }
+    ids.forEach(id => {
+      const entry = lib[id];
+      const row = document.createElement('div');
+      row.className = 'canvas-item';
+      const dateStr = entry.savedAt ? new Date(entry.savedAt).toLocaleString() : '';
+      row.innerHTML = `<div class="canvas-item-main">
+          <div class="canvas-item-name">${escapeHtml(entry.name)}</div>
+          <div class="canvas-item-date">${dateStr}</div>
+        </div>
+        <button class="canvas-item-del" title="Delete">✕</button>`;
+      row.querySelector('.canvas-item-main').addEventListener('click', () => loadFromLibrary(id));
+      row.querySelector('.canvas-item-del').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const ok = await confirmModal('Delete canvas', `Delete "${entry.name}"? This can't be undone.`, 'Delete');
+        if(!ok) return;
+        const lib2 = getLibrary();
+        delete lib2[id];
+        setLibrary(lib2);
+        if(currentCanvasId === id){ currentCanvasId = null; currentCanvasName = null; }
+        renderCanvasList();
+      });
+      canvasListItems.appendChild(row);
+    });
+  }
+
+  openBtn.addEventListener('click', () => { renderCanvasList(); canvasListOverlay.classList.add('open'); });
+  canvasListCloseBtn.addEventListener('click', () => canvasListOverlay.classList.remove('open'));
+  canvasListOverlay.addEventListener('click', (e) => { if(e.target === canvasListOverlay) canvasListOverlay.classList.remove('open'); });
 
   // ---------- UI wiring ----------
   authBtn.addEventListener('click', () => authPanel.classList.toggle('open'));
