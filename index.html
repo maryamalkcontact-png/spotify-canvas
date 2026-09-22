@@ -61,10 +61,18 @@
   .full-card .badge{margin-top:4px;font-size:9px;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;}
   .clip-editor{padding:8px;background:#141414;border-top:1px solid #2a2a2a;display:none;border-radius:0 0 10px 10px;}
   .clip-editor.open{display:block;}
-  .clip-editor .row{display:flex;gap:6px;align-items:center;margin-bottom:6px;}
+  .clip-editor .timerow{display:flex;gap:6px;align-items:center;margin-bottom:6px;}
   .clip-editor input{width:56px;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:4px 6px;border-radius:4px;font-size:11px;text-align:center;}
-  .clip-editor button{width:100%;background:var(--accent);border:none;color:#000;font-weight:600;padding:6px;border-radius:6px;font-size:11px;cursor:pointer;}
-  .clip-editor label{font-size:10px;color:var(--muted);}
+  .clip-editor .makeClipBtn{width:100%;background:var(--accent);border:none;color:#000;font-weight:600;padding:6px;border-radius:6px;font-size:11px;cursor:pointer;}
+  .clip-editor .setBtn{width:auto;flex-shrink:0;background:#2a2a2a;border:none;color:var(--accent);font-weight:600;padding:4px 9px;border-radius:12px;font-size:10px;cursor:pointer;}
+  .clip-editor label{font-size:10px;color:var(--muted);flex-shrink:0;}
+
+  .transport{display:flex;align-items:center;gap:8px;padding:0 10px 10px;}
+  .playBtn{background:var(--accent);border:none;color:#000;width:26px;height:26px;min-width:26px;border-radius:50%;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
+  .seekbar{flex:1;height:6px;background:#333;border-radius:3px;position:relative;cursor:pointer;}
+  .seekfill{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:3px;width:0%;pointer-events:none;}
+  .seekhandle{position:absolute;top:50%;width:10px;height:10px;background:#fff;border-radius:50%;transform:translate(-50%,-50%);left:0%;box-shadow:0 0 2px rgba(0,0,0,.6);pointer-events:none;}
+  .timeLabel{font-size:9px;color:var(--muted);white-space:nowrap;flex-shrink:0;}
 
   .empty-state{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:var(--muted);pointer-events:none;width:380px;}
   .empty-state h2{color:#555;font-weight:500;font-size:16px;}
@@ -246,6 +254,14 @@
 
   // ---------- Web Playback SDK (desktop only) ----------
   let player = null, deviceId = null;
+  // Live playback position, tracked from the SDK's state events so full-track cards can
+  // show a real, scrubbable progress bar (like the Spotify app) instead of silent hover-play.
+  let sdkTrackUri = null, sdkPosition = 0, sdkDuration = 0, sdkPaused = true, sdkLastTick = 0;
+  const transportRenderers = new Set();
+  function currentEstimatedPosition(){
+    if(sdkPaused) return sdkPosition;
+    return Math.min(sdkDuration || Infinity, sdkPosition + (Date.now() - sdkLastTick));
+  }
   window.onSpotifyWebPlaybackSDKReady = () => {
     if(!isLoggedIn() || IS_TOUCH) return;
     initPlayer();
@@ -261,7 +277,16 @@
     player.addListener('initialization_error', ({message}) => console.error('init error', message));
     player.addListener('authentication_error', ({message}) => console.error('auth error', message));
     player.addListener('account_error', ({message}) => console.error('account error (Premium required)', message));
+    player.addListener('player_state_changed', (state) => {
+      if(!state) return;
+      sdkPosition = state.position;
+      sdkDuration = state.duration;
+      sdkPaused = state.paused;
+      sdkLastTick = Date.now();
+      sdkTrackUri = state.track_window && state.track_window.current_track ? state.track_window.current_track.uri : null;
+    });
     player.connect();
+    setInterval(() => transportRenderers.forEach(fn => fn()), 250);
   }
   let pauseTimer = null, segmentTimer = null;
   async function playFullTrack(uri, startMs){
@@ -286,6 +311,107 @@
   function pauseNow(){
     clearTimeout(pauseTimer); clearTimeout(segmentTimer);
     getValidToken().then(token => { if(token) fetch('https://api.spotify.com/v1/me/player/pause', {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{}); });
+  }
+
+  // Play button + scrubbable timeline for a full (un-clipped) track card — lets you find a
+  // section by ear, like the real Spotify app, instead of typing exact start/end timestamps.
+  function wireTransport(el, uri, knownDuration){
+    const playBtn = el.querySelector('.playBtn');
+    const seekbar = el.querySelector('.seekbar');
+    const seekfill = el.querySelector('.seekfill');
+    const seekhandle = el.querySelector('.seekhandle');
+    const timeLabel = el.querySelector('.timeLabel');
+    const clipStartInput = el.querySelector('.clipStartInput');
+    const clipEndInput = el.querySelector('.clipEndInput');
+    const setStartBtn = el.querySelector('.setStartBtn');
+    const setEndBtn = el.querySelector('.setEndBtn');
+    let scrubbing = false;
+
+    function isActiveTrack(){ return sdkTrackUri === uri; }
+    function totalMs(){ return knownDuration || (isActiveTrack() ? sdkDuration : 0) || 0; }
+
+    function render(){
+      if(scrubbing) return;
+      const active = isActiveTrack();
+      const pos = active ? currentEstimatedPosition() : 0;
+      const dur = totalMs();
+      const pct = dur ? Math.min(100, (pos / dur) * 100) : 0;
+      seekfill.style.width = pct + '%';
+      seekhandle.style.left = pct + '%';
+      timeLabel.textContent = formatTime(pos) + ' / ' + formatTime(dur);
+      playBtn.textContent = (active && !sdkPaused) ? '⏸' : '▶';
+      el.classList.toggle('playing', active && !sdkPaused);
+    }
+    render();
+    transportRenderers.add(render);
+
+    playBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const token = await getValidToken();
+      if(!token) return;
+      if(isActiveTrack() && !sdkPaused){
+        await fetch('https://api.spotify.com/v1/me/player/pause', {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+        sdkPaused = true; sdkLastTick = Date.now();
+      } else if(isActiveTrack() && sdkPaused){
+        await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+        sdkPaused = false; sdkLastTick = Date.now();
+      } else {
+        await playFullTrack(uri, 0);
+        sdkTrackUri = uri; sdkPosition = 0; sdkDuration = knownDuration || sdkDuration; sdkPaused = false; sdkLastTick = Date.now();
+      }
+      render();
+    });
+
+    function msFromClientX(clientX){
+      const rect = seekbar.getBoundingClientRect();
+      const pct = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      return Math.floor(pct * totalMs());
+    }
+
+    async function seekTo(targetMs){
+      const token = await getValidToken();
+      if(!token) return;
+      if(isActiveTrack()){
+        await fetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${targetMs}&device_id=${deviceId}`, {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+        sdkPosition = targetMs; sdkLastTick = Date.now(); sdkPaused = false;
+      } else {
+        await playFullTrack(uri, targetMs);
+        sdkTrackUri = uri; sdkPosition = targetMs; sdkDuration = knownDuration || sdkDuration; sdkPaused = false; sdkLastTick = Date.now();
+      }
+      render();
+    }
+
+    seekbar.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      scrubbing = true;
+      const ms = msFromClientX(e.clientX);
+      const pct = totalMs() ? Math.min(100, (ms/totalMs())*100) : 0;
+      seekfill.style.width = pct+'%'; seekhandle.style.left = pct+'%';
+      timeLabel.textContent = formatTime(ms) + ' / ' + formatTime(totalMs());
+    });
+    document.addEventListener('mousemove', (e) => {
+      if(!scrubbing) return;
+      const ms = msFromClientX(e.clientX);
+      const pct = totalMs() ? Math.min(100, (ms/totalMs())*100) : 0;
+      seekfill.style.width = pct+'%'; seekhandle.style.left = pct+'%';
+      timeLabel.textContent = formatTime(ms) + ' / ' + formatTime(totalMs());
+    });
+    document.addEventListener('mouseup', (e) => {
+      if(!scrubbing) return;
+      scrubbing = false;
+      seekTo(msFromClientX(e.clientX));
+    });
+
+    if(setStartBtn) setStartBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ms = isActiveTrack() ? currentEstimatedPosition() : 0;
+      clipStartInput.value = formatTime(ms);
+    });
+    if(setEndBtn) setEndBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ms = isActiveTrack() ? currentEstimatedPosition() : 0;
+      clipEndInput.value = formatTime(ms);
+    });
   }
 
   // ---------- Helpers ----------
@@ -355,7 +481,7 @@
     // Spotify retired the standalone /playlists/{id}/tracks endpoint for new apps (403s),
     // so tracks are fetched via the main playlist resource with a `fields` filter instead —
     // tracks live under items.items[].item there (renamed from the old items[].track shape).
-    const fields = encodeURIComponent('items(items(item(uri,name,artists.name,album.images))),items.offset,items.limit,items.total');
+    const fields = encodeURIComponent('items(items(item(uri,name,artists.name,album.images,duration_ms))),items.offset,items.limit,items.total');
     let offset = 0;
     const limit = 100;
     let all = [];
@@ -379,7 +505,7 @@
       if(!tr) return;
       const art = (tr.album && tr.album.images && tr.album.images.length) ? tr.album.images[tr.album.images.length-1].url : '';
       const artists = (tr.artists || []).map(a=>a.name).join(', ');
-      const trackData = { uri: tr.uri, name: tr.name, artist: artists, art, full: !IS_TOUCH };
+      const trackData = { uri: tr.uri, name: tr.name, artist: artists, art, full: !IS_TOUCH, duration: tr.duration_ms };
       const el = document.createElement('div');
       el.className = 'track-item';
       el.draggable = !IS_TOUCH;
@@ -408,7 +534,7 @@
 
   function saveState(){
     try{
-      const arr = Object.values(cards).map(c => ({id:c.id, uri:c.uri, x:c.x, y:c.y, name:c.name, artist:c.artist, art:c.art, full:c.full, clipStart:c.clipStart, clipEnd:c.clipEnd}));
+      const arr = Object.values(cards).map(c => ({id:c.id, uri:c.uri, x:c.x, y:c.y, name:c.name, artist:c.artist, art:c.art, full:c.full, clipStart:c.clipStart, clipEnd:c.clipEnd, duration:c.duration}));
       localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
     }catch(e){}
   }
@@ -431,7 +557,7 @@
   };
 
   function makeCard(id, data, x, y){
-    const {uri, name, artist, art, full, clipStart, clipEnd} = data;
+    const {uri, name, artist, art, full, clipStart, clipEnd, duration} = data;
     const useSdk = full && !IS_TOUCH;
     const isClip = clipStart != null && clipEnd != null && clipEnd > clipStart;
     const el = document.createElement('div');
@@ -452,24 +578,38 @@
           <div class="a">${artist||''}</div>
         </div>
       </div>`;
+      // Non-clip full-track cards get a real play button + scrubbable timeline (like the
+      // Spotify app) so you can find a section by ear instead of typing exact timestamps.
+      if(!isClip){
+        bodyHtml += `<div class="transport">
+          <button class="playBtn" type="button">▶</button>
+          <div class="seekbar"><div class="seekfill"></div><div class="seekhandle"></div></div>
+          <span class="timeLabel">0:00 / ${formatTime(duration||0)}</span>
+        </div>`;
+      }
     } else {
       bodyHtml = `<div class="embed-wrap">loading…</div>`;
     }
 
+    const clipEditorHtml = !isClip ? `<div class="clip-editor">
+        <div class="timerow">
+          <label>Start</label><input class="clipStartInput" type="text" placeholder="0:00" value="">
+          ${useSdk ? '<button class="setBtn setStartBtn" type="button">Set from here</button>' : ''}
+        </div>
+        <div class="timerow">
+          <label>End</label><input class="clipEndInput" type="text" placeholder="0:30" value="">
+          ${useSdk ? '<button class="setBtn setEndBtn" type="button">Set from here</button>' : ''}
+        </div>
+        <button class="makeClipBtn">Create clip card</button>
+      </div>` : '';
+
     el.innerHTML = `<div class="card-header">
         <span class="tag">${tagLabel}</span>
         <div class="btns">
-          <button class="clipBtn" title="Make a clip from this">✂</button>
+          ${!isClip ? '<button class="clipBtn" title="Make a clip from this">✂</button>' : ''}
           <button class="del" title="Remove">✕</button>
         </div>
-      </div>${bodyHtml}
-      <div class="clip-editor">
-        <div class="row">
-          <label>Start</label><input class="clipStartInput" type="text" placeholder="0:00" value="${clipStart!=null?formatTime(clipStart):''}">
-          <label>End</label><input class="clipEndInput" type="text" placeholder="0:30" value="${clipEnd!=null?formatTime(clipEnd):''}">
-        </div>
-        <button class="makeClipBtn">Create clip card</button>
-      </div>`;
+      </div>${bodyHtml}${clipEditorHtml}`;
     canvas.appendChild(el);
     emptyState.style.display = 'none';
 
@@ -504,26 +644,32 @@
       if(Object.keys(cards).length === 0) emptyState.style.display = 'block';
     });
 
-    const clipEditor = el.querySelector('.clip-editor');
-    el.querySelector('.clipBtn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      clipEditor.classList.toggle('open');
-    });
-    el.querySelector('.makeClipBtn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      const sMs = parseTime(el.querySelector('.clipStartInput').value);
-      const eMs = parseTime(el.querySelector('.clipEndInput').value);
-      if(eMs <= sMs){ alert('End time must be after start time.'); return; }
-      addCardFromData({uri, name, artist, art, full, clipStart: sMs, clipEnd: eMs}, x + 30, y + 30);
-      clipEditor.classList.remove('open');
-    });
+    if(!isClip){
+      const clipEditor = el.querySelector('.clip-editor');
+      el.querySelector('.clipBtn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        clipEditor.classList.toggle('open');
+      });
+      el.querySelector('.makeClipBtn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sMs = parseTime(el.querySelector('.clipStartInput').value);
+        const eMs = parseTime(el.querySelector('.clipEndInput').value);
+        if(eMs <= sMs){ alert('Set an end point after the start point (scrub the bar and hit "Set from here" on each, or type a time).'); return; }
+        addCardFromData({uri, name, artist, art, full, clipStart: sMs, clipEnd: eMs, duration}, x + 30, y + 30);
+        clipEditor.classList.remove('open');
+      });
+    }
 
     // ---- Playback wiring ----
-    if(useSdk){
-      const startPlay = () => { el.classList.add('playing'); playFullTrack(uri, clipStart); if(isClip){ clearTimeout(segmentTimer); segmentTimer = setTimeout(pauseNow, clipEnd - clipStart); } };
+    if(useSdk && isClip){
+      // Already-extracted clip cards stay simple: hover plays just that segment.
+      const startPlay = () => { el.classList.add('playing'); playFullTrack(uri, clipStart); clearTimeout(segmentTimer); segmentTimer = setTimeout(pauseNow, clipEnd - clipStart); };
       const stopPlay = () => { el.classList.remove('playing'); schedulePause(); };
       el.addEventListener('mouseenter', startPlay);
       el.addEventListener('mouseleave', stopPlay);
+    } else if(useSdk){
+      // Full (un-clipped) track cards get a real play button + scrubbable timeline.
+      wireTransport(el, uri, duration);
     } else {
       // Embed-based playback (preview cards, and all cards on touch devices)
       const trackId = trackIdFromUri(uri);
@@ -572,7 +718,7 @@
       }
     }
 
-    cards[id] = {id, el, uri, name, artist, art, full, clipStart, clipEnd, x, y};
+    cards[id] = {id, el, uri, name, artist, art, full, clipStart, clipEnd, duration, x, y};
   }
 
   function addCardFromData(data, x, y){
