@@ -37,12 +37,18 @@
   .track-item .a{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .track-item .tapadd{background:#2a2a2a;border:none;color:var(--accent);border-radius:10px;font-size:10px;padding:4px 8px;cursor:pointer;flex-shrink:0;}
 
-  #viewport{position:absolute;top:56px;left:0;right:0;bottom:0;overflow:auto;cursor:grab;
-    background-image:radial-gradient(var(--grid) 1px, transparent 1px);
-    background-size:24px 24px;background-color:#151515;transition:left .15s;-webkit-overflow-scrolling:touch;}
+  #viewport{position:absolute;top:56px;left:0;right:0;bottom:0;overflow:hidden;cursor:grab;
+    background-color:#151515;transition:left .15s;}
   #viewport.shifted{left:280px;}
   #viewport.panning{cursor:grabbing;}
-  #canvas{position:relative;width:6000px;height:6000px;}
+  #canvas{position:absolute;top:0;left:0;width:6000px;height:6000px;transform-origin:0 0;
+    background-image:radial-gradient(var(--grid) 1px, transparent 1px);
+    background-size:24px 24px;background-color:#151515;}
+
+  #zoomControls{position:fixed;bottom:16px;right:16px;background:var(--panel);border:1px solid #333;border-radius:20px;padding:4px 6px;display:flex;align-items:center;gap:2px;z-index:1000;box-shadow:0 4px 14px rgba(0,0,0,.5);}
+  #zoomControls button{background:none;border:none;color:var(--text);font-size:16px;width:26px;height:26px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
+  #zoomControls button:hover{background:#333;}
+  #zoomLabel{font-size:11px;color:var(--muted);min-width:38px;text-align:center;cursor:pointer;user-select:none;}
 
   .card{position:absolute;width:230px;background:var(--card);border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.5);overflow:visible;border:1px solid #2a2a2a;user-select:none;}
   .card.playing{box-shadow:0 0 0 2px var(--accent),0 4px 14px rgba(0,0,0,.5);}
@@ -74,6 +80,9 @@
   .seekhandle{position:absolute;top:50%;width:10px;height:10px;background:#fff;border-radius:50%;transform:translate(-50%,-50%);left:0%;box-shadow:0 0 2px rgba(0,0,0,.6);pointer-events:none;}
   .timeLabel{font-size:9px;color:var(--muted);white-space:nowrap;flex-shrink:0;}
 
+  .text-body{padding:12px;font-size:14px;line-height:1.5;color:var(--text);min-height:60px;outline:none;white-space:pre-wrap;word-break:break-word;border-radius:0 0 10px 10px;cursor:text;}
+  .text-body:empty:before{content:'Type something…';color:var(--muted);}
+
   .empty-state{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:var(--muted);pointer-events:none;width:380px;}
   .empty-state h2{color:#555;font-weight:500;font-size:16px;}
 
@@ -90,10 +99,14 @@
 <div id="toolbar">
   <input id="urlInput" type="text" placeholder="Paste a Spotify track link…">
   <button id="addBtn">Add song</button>
+  <button id="addTextBtn" class="secondary">Add text</button>
   <button id="libraryBtn" class="secondary">Library</button>
+  <button id="saveBtn" class="secondary">Save canvas</button>
+  <button id="openBtn" class="secondary">Open canvas</button>
+  <input id="openInput" type="file" accept="application/json" style="display:none">
   <button id="authBtn" class="secondary">Connect Spotify</button>
   <span id="status">Not connected</span>
-  <div id="hint">Drag to pan · Drag a card header to move · Hover (or tap) a card to play</div>
+  <div id="hint">Scroll to pan · Ctrl/⌘+scroll or pinch to zoom · Drag a card header to move</div>
 </div>
 
 <div id="authPanel">
@@ -120,6 +133,11 @@
       <h2>Connect Spotify to drag songs from any playlist — or paste a track link to add a preview card</h2>
     </div>
   </div>
+</div>
+<div id="zoomControls">
+  <button id="zoomOutBtn" type="button" title="Zoom out">−</button>
+  <span id="zoomLabel" title="Reset to 100%">100%</span>
+  <button id="zoomInBtn" type="button" title="Zoom in">+</button>
 </div>
 
 <script src="https://sdk.scdn.co/spotify-player.js"></script>
@@ -148,6 +166,14 @@
   const loadPlaylistBtn = document.getElementById('loadPlaylistBtn');
   const loadedPlaylistMeta = document.getElementById('loadedPlaylistMeta');
   const mobileNote = document.getElementById('mobileNote');
+  const addTextBtn = document.getElementById('addTextBtn');
+  const saveBtn = document.getElementById('saveBtn');
+  const openBtn = document.getElementById('openBtn');
+  const openInput = document.getElementById('openInput');
+  const zoomControls = document.getElementById('zoomControls');
+  const zoomInBtn = document.getElementById('zoomInBtn');
+  const zoomOutBtn = document.getElementById('zoomOutBtn');
+  const zoomLabel = document.getElementById('zoomLabel');
 
   // Touch / no-hover device detection: Spotify's Web Playback SDK does not run on
   // mobile browsers, and there is no real "hover" on a touchscreen, so those
@@ -543,9 +569,9 @@
         });
       } else {
         el.querySelector('.tapadd').addEventListener('click', () => {
-          const vw = viewport.clientWidth, vh = viewport.clientHeight;
-          const x = viewport.scrollLeft + vw/2 - 115 + (Math.random()*60-30);
-          const y = viewport.scrollTop + vh/2 - 40 + (Math.random()*60-30);
+          const center = viewportCenterToCanvas();
+          const x = center.x - 115 + (Math.random()*60-30);
+          const y = center.y - 40 + (Math.random()*60-30);
           addCardFromData(trackData, x, y);
           sidebar.classList.remove('open');
           viewport.classList.remove('shifted');
@@ -559,14 +585,84 @@
   let cards = {};
   let idCounter = 0;
 
+  // ---------- Camera (pan + zoom, Figma-style) ----------
+  // The canvas is panned/zoomed with a CSS transform rather than native scrolling, so
+  // zooming can stay anchored under the cursor exactly like a real design-tool canvas.
+  let camX = 0, camY = 0, camZoom = 1;
+  const MIN_ZOOM = 0.15, MAX_ZOOM = 3;
+  function applyTransform(){
+    canvas.style.transform = `translate(${camX}px, ${camY}px) scale(${camZoom})`;
+    zoomLabel.textContent = Math.round(camZoom * 100) + '%';
+  }
+  // Zoom while keeping the canvas point under (clientX, clientY) fixed on screen.
+  function zoomAt(clientX, clientY, newZoom){
+    newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, newZoom));
+    const rect = viewport.getBoundingClientRect();
+    const cx = clientX - rect.left, cy = clientY - rect.top;
+    const ratio = newZoom / camZoom;
+    camX = cx - (cx - camX) * ratio;
+    camY = cy - (cy - camY) * ratio;
+    camZoom = newZoom;
+    applyTransform();
+  }
+  function zoomAtCenter(newZoom){
+    const rect = viewport.getBoundingClientRect();
+    zoomAt(rect.left + rect.width/2, rect.top + rect.height/2, newZoom);
+  }
+  // Canvas-local coordinates of the middle of the visible viewport — used to drop new
+  // cards where you're actually looking, regardless of current pan/zoom.
+  function viewportCenterToCanvas(){
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    return { x: (vw/2 - camX) / camZoom, y: (vh/2 - camY) / camZoom };
+  }
+
+  function serializeCards(){
+    return Object.values(cards).map(c => c.type === 'text'
+      ? {id:c.id, type:'text', text:c.text, x:c.x, y:c.y}
+      : {id:c.id, uri:c.uri, x:c.x, y:c.y, name:c.name, artist:c.artist, art:c.art, full:c.full, clipStart:c.clipStart, clipEnd:c.clipEnd, duration:c.duration});
+  }
   function saveState(){
     try{
-      const arr = Object.values(cards).map(c => ({id:c.id, uri:c.uri, x:c.x, y:c.y, name:c.name, artist:c.artist, art:c.art, full:c.full, clipStart:c.clipStart, clipEnd:c.clipEnd, duration:c.duration}));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeCards()));
     }catch(e){}
   }
   function loadState(){
     try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }catch(e){ return []; }
+  }
+
+  function clearCanvas(){
+    Object.values(cards).forEach(c => c.el.remove());
+    cards = {};
+    idCounter = 0;
+  }
+
+  // Shared drag-by-header wiring for every card kind (song cards and text cards alike).
+  // Screen-space mouse deltas are converted to canvas-local coordinates by dividing by
+  // the current zoom level, since card positions are stored in unscaled canvas space.
+  function wireDrag(el, header, id){
+    let dragging = false, offX = 0, offY = 0;
+    function dragStart(clientX, clientY, target){
+      if(target.classList.contains('del') || target.classList.contains('clipBtn')) return false;
+      dragging = true;
+      const rect = el.getBoundingClientRect();
+      offX = (clientX - rect.left) / camZoom; offY = (clientY - rect.top) / camZoom;
+      return true;
+    }
+    function dragMove(clientX, clientY){
+      if(!dragging) return;
+      const canvasRect = canvas.getBoundingClientRect();
+      let nx = Math.max(0, (clientX - canvasRect.left) / camZoom - offX);
+      let ny = Math.max(0, (clientY - canvasRect.top) / camZoom - offY);
+      el.style.left = nx + 'px'; el.style.top = ny + 'px';
+      if(cards[id]){ cards[id].x = nx; cards[id].y = ny; }
+    }
+    function dragEnd(){ if(dragging){ dragging = false; saveState(); } }
+    header.addEventListener('mousedown', (e) => { if(dragStart(e.clientX, e.clientY, e.target)) e.preventDefault(); });
+    document.addEventListener('mousemove', (e) => dragMove(e.clientX, e.clientY));
+    document.addEventListener('mouseup', dragEnd);
+    header.addEventListener('touchstart', (e) => { const t = e.touches[0]; dragStart(t.clientX, t.clientY, e.target); }, {passive:true});
+    document.addEventListener('touchmove', (e) => { if(dragging){ const t = e.touches[0]; dragMove(t.clientX, t.clientY); } }, {passive:true});
+    document.addEventListener('touchend', dragEnd);
   }
 
   function extractTrackUri(input){
@@ -583,7 +679,44 @@
     pendingEmbeds = [];
   };
 
+  function makeTextCard(id, data, x, y){
+    const el = document.createElement('div');
+    el.className = 'card text-card';
+    el.dataset.id = id;
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+    el.innerHTML = `<div class="card-header">
+        <span class="tag">Text</span>
+        <div class="btns"><button class="del" title="Remove">✕</button></div>
+      </div>
+      <div class="text-body" contenteditable="true" spellcheck="false"></div>`;
+    canvas.appendChild(el);
+    emptyState.style.display = 'none';
+
+    const body = el.querySelector('.text-body');
+    body.textContent = data.text || '';
+    // Clicking/typing in the text itself should edit it, not pan the canvas or start a drag.
+    body.addEventListener('mousedown', (e) => e.stopPropagation());
+    body.addEventListener('touchstart', (e) => e.stopPropagation(), {passive:true});
+    body.addEventListener('input', () => {
+      // innerText (not textContent) so line breaks typed with Enter survive a save/reload —
+      // contenteditable represents them as <div>/<br> boundaries, which only innerText reflects.
+      if(cards[id]) cards[id].text = body.innerText;
+      saveState();
+    });
+
+    wireDrag(el, el.querySelector('.card-header'), id);
+
+    el.querySelector('.del').addEventListener('click', () => {
+      el.remove(); delete cards[id]; saveState();
+      if(Object.keys(cards).length === 0) emptyState.style.display = 'block';
+    });
+
+    cards[id] = {id, el, type:'text', text: data.text || '', x, y};
+  }
+
   function makeCard(id, data, x, y){
+    if(data.type === 'text') return makeTextCard(id, data, x, y);
     const {uri, name, artist, art, full, clipStart, clipEnd, duration} = data;
     const useSdk = full && !IS_TOUCH;
     const isClip = clipStart != null && clipEnd != null && clipEnd > clipStart;
@@ -640,31 +773,7 @@
     canvas.appendChild(el);
     emptyState.style.display = 'none';
 
-    const header = el.querySelector('.card-header');
-    let dragging = false, offX = 0, offY = 0;
-    function dragStart(clientX, clientY, target){
-      if(target.classList.contains('del') || target.classList.contains('clipBtn')) return false;
-      dragging = true;
-      const rect = el.getBoundingClientRect();
-      offX = clientX - rect.left; offY = clientY - rect.top;
-      return true;
-    }
-    function dragMove(clientX, clientY){
-      if(!dragging) return;
-      const canvasRect = canvas.getBoundingClientRect();
-      let nx = Math.max(0, clientX - canvasRect.left - offX);
-      let ny = Math.max(0, clientY - canvasRect.top - offY);
-      el.style.left = nx + 'px'; el.style.top = ny + 'px';
-      if(cards[id]){ cards[id].x = nx; cards[id].y = ny; }
-    }
-    function dragEnd(){ if(dragging){ dragging = false; saveState(); } }
-
-    header.addEventListener('mousedown', (e) => { if(dragStart(e.clientX, e.clientY, e.target)) e.preventDefault(); });
-    document.addEventListener('mousemove', (e) => dragMove(e.clientX, e.clientY));
-    document.addEventListener('mouseup', dragEnd);
-    header.addEventListener('touchstart', (e) => { const t = e.touches[0]; dragStart(t.clientX, t.clientY, e.target); }, {passive:true});
-    document.addEventListener('touchmove', (e) => { if(dragging){ const t = e.touches[0]; dragMove(t.clientX, t.clientY); } }, {passive:true});
-    document.addEventListener('touchend', dragEnd);
+    wireDrag(el, el.querySelector('.card-header'), id);
 
     el.querySelector('.del').addEventListener('click', () => {
       el.remove(); delete cards[id]; saveState();
@@ -752,12 +861,16 @@
   addBtn.addEventListener('click', () => {
     const uri = extractTrackUri(urlInput.value);
     if(!uri){ urlInput.style.borderColor = '#c0392b'; setTimeout(()=>urlInput.style.borderColor='#333',800); return; }
-    const vw = viewport.clientWidth, vh = viewport.clientHeight;
-    const x = viewport.scrollLeft + vw/2 - 115, y = viewport.scrollTop + vh/2 - 40;
-    addCardFromData({uri, full:false}, x, y);
+    const center = viewportCenterToCanvas();
+    addCardFromData({uri, full:false}, center.x - 115, center.y - 40);
     urlInput.value = '';
   });
   urlInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') addBtn.click(); });
+
+  addTextBtn.addEventListener('click', () => {
+    const center = viewportCenterToCanvas();
+    addCardFromData({type:'text', text:''}, center.x - 115, center.y - 40);
+  });
 
   canvas.addEventListener('dragover', (e) => e.preventDefault());
   canvas.addEventListener('drop', (e) => {
@@ -766,22 +879,23 @@
     if(!raw) return;
     const data = JSON.parse(raw);
     const canvasRect = canvas.getBoundingClientRect();
-    const x = e.clientX - canvasRect.left - 110, y = e.clientY - canvasRect.top - 30;
+    const x = (e.clientX - canvasRect.left) / camZoom - 110, y = (e.clientY - canvasRect.top) / camZoom - 30;
     addCardFromData(data, Math.max(0,x), Math.max(0,y));
   });
 
-  // pan (mouse + touch)
-  let panning = false, panStartX=0, panStartY=0, scrollStartX=0, scrollStartY=0;
+  // ---------- Pan (mouse + touch) ----------
+  let panning = false, panStartX=0, panStartY=0, camStartX=0, camStartY=0;
   function panStart(target, clientX, clientY){
     if(target !== viewport && target !== canvas && target !== emptyState) return;
     panning = true; viewport.classList.add('panning');
     panStartX = clientX; panStartY = clientY;
-    scrollStartX = viewport.scrollLeft; scrollStartY = viewport.scrollTop;
+    camStartX = camX; camStartY = camY;
   }
   function panMove(clientX, clientY){
     if(!panning) return;
-    viewport.scrollLeft = scrollStartX - (clientX - panStartX);
-    viewport.scrollTop = scrollStartY - (clientY - panStartY);
+    camX = camStartX + (clientX - panStartX);
+    camY = camStartY + (clientY - panStartY);
+    applyTransform();
   }
   function panEnd(){ panning = false; viewport.classList.remove('panning'); }
   viewport.addEventListener('mousedown', (e) => panStart(e.target, e.clientX, e.clientY));
@@ -790,6 +904,70 @@
   viewport.addEventListener('touchstart', (e) => { const t = e.touches[0]; panStart(e.target, t.clientX, t.clientY); }, {passive:true});
   document.addEventListener('touchmove', (e) => { if(panning){ const t = e.touches[0]; panMove(t.clientX, t.clientY); } }, {passive:true});
   document.addEventListener('touchend', panEnd);
+
+  // ---------- Zoom (Figma-style: pinch / Ctrl+scroll to zoom, plain scroll to pan) ----------
+  viewport.addEventListener('wheel', (e) => {
+    if(e.ctrlKey || e.metaKey){
+      e.preventDefault();
+      // Smooth, continuous zoom curve (matches the small deltaY values a trackpad
+      // pinch sends) anchored under the cursor, same as Figma/Google Maps.
+      zoomAt(e.clientX, e.clientY, camZoom * Math.pow(1.0015, -e.deltaY));
+    } else {
+      e.preventDefault();
+      camX -= e.deltaX; camY -= e.deltaY;
+      applyTransform();
+    }
+  }, {passive:false});
+
+  zoomInBtn.addEventListener('click', () => zoomAtCenter(camZoom * 1.25));
+  zoomOutBtn.addEventListener('click', () => zoomAtCenter(camZoom / 1.25));
+  zoomLabel.addEventListener('click', () => zoomAtCenter(1));
+
+  document.addEventListener('keydown', (e) => {
+    const tag = (e.target && e.target.tagName || '').toLowerCase();
+    if(tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable)) return;
+    if(!(e.ctrlKey || e.metaKey)) return;
+    if(e.key === '=' || e.key === '+'){ e.preventDefault(); zoomAtCenter(camZoom * 1.25); }
+    else if(e.key === '-'){ e.preventDefault(); zoomAtCenter(camZoom / 1.25); }
+    else if(e.key === '0'){ e.preventDefault(); zoomAtCenter(1); }
+  });
+
+  // ---------- Save / open canvas files ----------
+  saveBtn.addEventListener('click', () => {
+    const name = prompt('Name this canvas file:', 'my-canvas');
+    if(name === null) return;
+    const payload = { app: 'spotify-canvas', version: 1, camX, camY, camZoom, cards: serializeCards() };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (name.trim() || 'canvas').replace(/[^a-z0-9\-_ ]/gi, '').trim() || 'canvas';
+    a.href = url; a.download = safeName + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+
+  openBtn.addEventListener('click', () => openInput.click());
+  openInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let data;
+      try{ data = JSON.parse(reader.result); }
+      catch(err){ alert('Could not read that file — is it a canvas file saved from this app?'); openInput.value = ''; return; }
+      clearCanvas();
+      const list = Array.isArray(data.cards) ? data.cards : (Array.isArray(data) ? data : []);
+      list.forEach(c => { idCounter++; makeCard(c.id || ('c'+idCounter+'_'+Date.now()), c, c.x||0, c.y||0); });
+      emptyState.style.display = Object.keys(cards).length ? 'none' : 'block';
+      if(typeof data.camZoom === 'number'){
+        camX = data.camX||0; camY = data.camY||0; camZoom = data.camZoom;
+        applyTransform();
+      }
+      saveState();
+      openInput.value = '';
+    };
+    reader.readAsText(file);
+  });
 
   // ---------- UI wiring ----------
   authBtn.addEventListener('click', () => authPanel.classList.toggle('open'));
@@ -800,8 +978,9 @@
   });
 
   // ---------- init ----------
-  viewport.scrollLeft = 3000 - viewport.clientWidth/2;
-  viewport.scrollTop = 3000 - viewport.clientHeight/2;
+  camX = viewport.clientWidth/2 - 3000;
+  camY = viewport.clientHeight/2 - 3000;
+  applyTransform();
 
   const saved = loadState();
   if(saved.length){
