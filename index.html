@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spotify Canvas</title>
+<style>
+  :root{--bg:#121212;--panel:#1c1c1c;--card:#181818;--accent:#1db954;--text:#eee;--muted:#888;--grid:#2a2a2a;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;}
+  #toolbar{position:fixed;top:0;left:0;right:0;min-height:56px;background:var(--panel);display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;z-index:1000;border-bottom:1px solid #2a2a2a;}
+  #toolbar input{flex:0 1 300px;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:8px 10px;border-radius:6px;font-size:13px;}
+  #toolbar input:focus{outline:1px solid var(--accent);}
+  #toolbar button{background:var(--accent);border:none;color:#000;font-weight:600;padding:8px 14px;border-radius:20px;cursor:pointer;font-size:13px;white-space:nowrap;}
+  #toolbar button:hover{background:#1ed760;}
+  #toolbar button.secondary{background:#2a2a2a;color:#eee;}
+  #toolbar button.secondary:hover{background:#3a3a3a;}
+  #status{font-size:12px;color:var(--muted);white-space:nowrap;}
+  #hint{color:var(--muted);font-size:11px;margin-left:auto;white-space:nowrap;}
+  @media (max-width:760px){ #hint{display:none;} #toolbar input{flex:1 1 140px;} }
+
+  #sidebar{position:fixed;top:56px;left:0;bottom:0;width:280px;max-width:80vw;background:var(--panel);border-right:1px solid #2a2a2a;overflow-y:auto;z-index:900;padding:10px;display:none;}
+  #sidebar.open{display:block;}
+  #sidebar h3{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:14px 0 6px;}
+  #loadPlaylistRow{display:flex;gap:6px;}
+  #loadPlaylistRow input{flex:1;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:6px 8px;border-radius:6px;font-size:12px;min-width:0;}
+  #loadPlaylistRow button{background:var(--accent);border:none;color:#000;font-weight:600;padding:6px 10px;border-radius:14px;font-size:12px;cursor:pointer;}
+  #loadedPlaylistMeta{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4;}
+  .pl-item{padding:8px 8px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;}
+  .pl-item:hover{background:#252525;}
+  .pl-item.active{background:#252525;color:var(--accent);}
+  .track-item{display:flex;align-items:center;gap:8px;padding:6px 6px;border-radius:6px;cursor:grab;font-size:12px;}
+  .track-item:hover{background:#252525;}
+  .track-item img{width:32px;height:32px;border-radius:4px;flex-shrink:0;}
+  .track-item .meta{overflow:hidden;flex:1;}
+  .track-item .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .track-item .a{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .track-item .tapadd{background:#2a2a2a;border:none;color:var(--accent);border-radius:10px;font-size:10px;padding:4px 8px;cursor:pointer;flex-shrink:0;}
+
+  #viewport{position:absolute;top:56px;left:0;right:0;bottom:0;overflow:auto;cursor:grab;
+    background-image:radial-gradient(var(--grid) 1px, transparent 1px);
+    background-size:24px 24px;background-color:#151515;transition:left .15s;-webkit-overflow-scrolling:touch;}
+  #viewport.shifted{left:280px;}
+  #viewport.panning{cursor:grabbing;}
+  #canvas{position:relative;width:6000px;height:6000px;}
+
+  .card{position:absolute;width:230px;background:var(--card);border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.5);overflow:visible;border:1px solid #2a2a2a;user-select:none;}
+  .card.playing{box-shadow:0 0 0 2px var(--accent),0 4px 14px rgba(0,0,0,.5);}
+  .card-header{display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:#202020;cursor:move;font-size:11px;color:var(--muted);border-radius:10px 10px 0 0;}
+  .card-header .tag{color:var(--accent);text-transform:uppercase;letter-spacing:.5px;font-size:9px;}
+  .card-header .btns{display:flex;gap:4px;align-items:center;}
+  .card-header button{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:2px 5px;border-radius:4px;}
+  .card-header button:hover{background:#333;color:#fff;}
+  .card-header .del:hover{background:#c0392b;color:#fff;}
+  .embed-wrap{width:100%;min-height:80px;background:#0a0a0a;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;border-radius:0 0 10px 10px;overflow:hidden;}
+  .full-card{display:flex;gap:10px;padding:10px;align-items:center;cursor:pointer;}
+  .full-card img{width:56px;height:56px;border-radius:6px;flex-shrink:0;}
+  .full-card .meta{overflow:hidden;}
+  .full-card .t{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .full-card .a{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .full-card .badge{margin-top:4px;font-size:9px;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;}
+  .clip-editor{padding:8px;background:#141414;border-top:1px solid #2a2a2a;display:none;border-radius:0 0 10px 10px;}
+  .clip-editor.open{display:block;}
+  .clip-editor .row{display:flex;gap:6px;align-items:center;margin-bottom:6px;}
+  .clip-editor input{width:56px;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:4px 6px;border-radius:4px;font-size:11px;text-align:center;}
+  .clip-editor button{width:100%;background:var(--accent);border:none;color:#000;font-weight:600;padding:6px;border-radius:6px;font-size:11px;cursor:pointer;}
+  .clip-editor label{font-size:10px;color:var(--muted);}
+
+  .empty-state{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:var(--muted);pointer-events:none;width:380px;}
+  .empty-state h2{color:#555;font-weight:500;font-size:16px;}
+
+  #authPanel{position:fixed;top:64px;right:16px;background:var(--panel);border:1px solid #333;border-radius:10px;padding:14px;width:300px;max-width:85vw;z-index:1100;box-shadow:0 8px 24px rgba(0,0,0,.5);display:none;}
+  #authPanel.open{display:block;}
+  #authPanel label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px;}
+  #authPanel input{width:100%;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:7px 9px;border-radius:6px;font-size:12px;margin-bottom:10px;}
+  #authPanel .redirect{font-size:11px;color:var(--accent);word-break:break-all;background:#0f0f0f;padding:6px 8px;border-radius:6px;margin-bottom:10px;}
+  #authPanel button{width:100%;}
+  #mobileNote{font-size:10px;color:var(--muted);margin-top:8px;line-height:1.4;}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <input id="urlInput" type="text" placeholder="Paste a Spotify track link…">
+  <button id="addBtn">Add song</button>
+  <button id="libraryBtn" class="secondary">Library</button>
+  <button id="authBtn" class="secondary">Connect Spotify</button>
+  <span id="status">Not connected</span>
+  <div id="hint">Drag to pan · Drag a card header to move · Hover (or tap) a card to play</div>
+</div>
+
+<div id="authPanel">
+  <label>Spotify Client ID (from your own app at developer.spotify.com/dashboard)</label>
+  <input id="clientIdInput" type="text" placeholder="e.g. 8f7a2c...">
+  <label>Redirect URI to register on that app (copy exactly):</label>
+  <div class="redirect" id="redirectUriDisplay"></div>
+  <button id="connectBtn">Log in with Spotify</button>
+  <div id="mobileNote"></div>
+</div>
+
+<div id="sidebar">
+  <h3>Load any playlist by link</h3>
+  <div id="loadPlaylistRow">
+    <input id="playlistUrlInput" type="text" placeholder="Paste a playlist link…">
+    <button id="loadPlaylistBtn">Load</button>
+  </div>
+  <div id="loadedPlaylistMeta"></div>
+  <h3>Your Playlists</h3>
+  <div id="playlistList"></div>
+  <h3 id="tracksHeading" style="display:none;">Tracks</h3>
+  <div id="trackList"></div>
+</div>
+
+<div id="viewport">
+  <div id="canvas">
+    <div class="empty-state" id="emptyState">
+      <h2>Connect Spotify to drag songs from any playlist — or paste a track link to add a preview card</h2>
+    </div>
+  </div>
+</div>
+
+<script src="https://sdk.scdn.co/spotify-player.js"></script>
+<script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
+<script>
+(function(){
+  const STORAGE_KEY = 'spotify-canvas-cards-v2';
+  const CLIENT_ID_KEY = 'spc_client_id';
+  const TOKENS_KEY = 'spc_tokens';
+
+  const canvas = document.getElementById('canvas');
+  const viewport = document.getElementById('viewport');
+  const urlInput = document.getElementById('urlInput');
+  const addBtn = document.getElementById('addBtn');
+  const emptyState = document.getElementById('emptyState');
+  const authPanel = document.getElementById('authPanel');
+  const authBtn = document.getElementById('authBtn');
+  const clientIdInput = document.getElementById('clientIdInput');
+  const redirectUriDisplay = document.getElementById('redirectUriDisplay');
+  const connectBtn = document.getElementById('connectBtn');
+  const statusEl = document.getElementById('status');
+  const libraryBtn = document.getElementById('libraryBtn');
+  const sidebar = document.getElementById('sidebar');
+  const playlistList = document.getElementById('playlistList');
+  const trackList = document.getElementById('trackList');
+  const tracksHeading = document.getElementById('tracksHeading');
+  const playlistUrlInput = document.getElementById('playlistUrlInput');
+  const loadPlaylistBtn = document.getElementById('loadPlaylistBtn');
+  const loadedPlaylistMeta = document.getElementById('loadedPlaylistMeta');
+  const mobileNote = document.getElementById('mobileNote');
+
+  // Touch / no-hover device detection: Spotify's Web Playback SDK does not run on
+  // mobile browsers, and there is no real "hover" on a touchscreen, so those
+  // devices fall back to tap-to-play 30s previews via the public embed player.
+  const IS_TOUCH = !window.matchMedia('(hover: hover)').matches || navigator.maxTouchPoints > 2;
+  mobileNote.textContent = IS_TOUCH
+    ? 'This device plays 30-second previews on tap (full in-browser playback only works on desktop browsers — that\'s a Spotify platform limit, not this app).'
+    : '';
+
+  const redirectUri = location.origin + location.pathname;
+  redirectUriDisplay.textContent = redirectUri;
+  clientIdInput.value = localStorage.getItem(CLIENT_ID_KEY) || '';
+
+  // ---------- PKCE / OAuth ----------
+  function generateRandomString(length){
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let text = '';
+    const values = crypto.getRandomValues(new Uint8Array(length));
+    values.forEach(v => text += possible[v % possible.length]);
+    return text;
+  }
+  function base64urlencode(buf){
+    let str = '';
+    const bytes = new Uint8Array(buf);
+    for(const b of bytes) str += String.fromCharCode(b);
+    return btoa(str).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+  async function pkceChallenge(){
+    const verifier = generateRandomString(64);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    return {verifier, challenge: base64urlencode(digest)};
+  }
+
+  function getTokens(){
+    try{ return JSON.parse(localStorage.getItem(TOKENS_KEY) || 'null'); }catch(e){ return null; }
+  }
+  function saveTokens(json){
+    const existing = getTokens() || {};
+    const tokens = {
+      access_token: json.access_token,
+      refresh_token: json.refresh_token || existing.refresh_token,
+      expires_at: Date.now() + (json.expires_in - 30) * 1000
+    };
+    localStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
+    return tokens;
+  }
+
+  async function login(){
+    const clientId = clientIdInput.value.trim();
+    if(!clientId){ alert('Enter your Spotify Client ID first.'); return; }
+    localStorage.setItem(CLIENT_ID_KEY, clientId);
+    const {verifier, challenge} = await pkceChallenge();
+    sessionStorage.setItem('spc_verifier', verifier);
+    const scope = 'streaming user-read-email user-read-private playlist-read-private playlist-read-collaborative user-modify-playback-state user-read-playback-state';
+    const params = new URLSearchParams({
+      client_id: clientId, response_type: 'code', redirect_uri: redirectUri,
+      scope, code_challenge_method: 'S256', code_challenge: challenge
+    });
+    location.href = 'https://accounts.spotify.com/authorize?' + params.toString();
+  }
+
+  async function exchangeCode(code){
+    const clientId = localStorage.getItem(CLIENT_ID_KEY);
+    const verifier = sessionStorage.getItem('spc_verifier');
+    const body = new URLSearchParams({
+      client_id: clientId, grant_type: 'authorization_code', code,
+      redirect_uri: redirectUri, code_verifier: verifier
+    });
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body
+    });
+    const json = await res.json();
+    if(json.access_token){ saveTokens(json); history.replaceState({}, '', redirectUri); await afterLogin(); }
+    else { console.error(json); alert('Login failed: ' + (json.error_description || json.error)); }
+  }
+
+  async function refreshToken(){
+    const tokens = getTokens();
+    const clientId = localStorage.getItem(CLIENT_ID_KEY);
+    if(!tokens || !tokens.refresh_token || !clientId) return null;
+    const body = new URLSearchParams({
+      client_id: clientId, grant_type: 'refresh_token', refresh_token: tokens.refresh_token
+    });
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body
+    });
+    const json = await res.json();
+    if(json.access_token) return saveTokens(json);
+    return null;
+  }
+
+  async function getValidToken(){
+    let tokens = getTokens();
+    if(!tokens) return null;
+    if(Date.now() >= tokens.expires_at){ tokens = await refreshToken(); }
+    return tokens ? tokens.access_token : null;
+  }
+
+  function isLoggedIn(){ const t = getTokens(); return !!(t && t.refresh_token); }
+
+  async function afterLogin(){
+    authPanel.classList.remove('open');
+    const token = await getValidToken();
+    if(!token) return;
+    const res = await fetch('https://api.spotify.com/v1/me', {headers:{Authorization:'Bearer '+token}});
+    const me = await res.json();
+    statusEl.textContent = 'Connected as ' + (me.display_name || me.id);
+    authBtn.textContent = 'Reconnect';
+    loadMyPlaylists();
+  }
+
+  // ---------- Web Playback SDK (desktop only) ----------
+  let player = null, deviceId = null;
+  window.onSpotifyWebPlaybackSDKReady = () => {
+    if(!isLoggedIn() || IS_TOUCH) return;
+    initPlayer();
+  };
+  function initPlayer(){
+    player = new Spotify.Player({
+      name: 'Spotify Canvas',
+      getOAuthToken: cb => { getValidToken().then(t => cb(t)); },
+      volume: 0.8
+    });
+    player.addListener('ready', ({device_id}) => { deviceId = device_id; });
+    player.addListener('not_ready', () => { deviceId = null; });
+    player.addListener('initialization_error', ({message}) => console.error('init error', message));
+    player.addListener('authentication_error', ({message}) => console.error('auth error', message));
+    player.addListener('account_error', ({message}) => console.error('account error (Premium required)', message));
+    player.connect();
+  }
+  let pauseTimer = null, segmentTimer = null;
+  async function playFullTrack(uri, startMs){
+    clearTimeout(pauseTimer); clearTimeout(segmentTimer);
+    const token = await getValidToken();
+    if(!token || !deviceId) return;
+    const body = {uris:[uri]};
+    if(startMs) body.position_ms = startMs;
+    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+      method:'PUT', headers:{Authorization:'Bearer '+token, 'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    }).catch(()=>{});
+  }
+  function schedulePause(){
+    clearTimeout(pauseTimer); clearTimeout(segmentTimer);
+    pauseTimer = setTimeout(async () => {
+      const token = await getValidToken();
+      if(!token) return;
+      fetch('https://api.spotify.com/v1/me/player/pause', {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+    }, 150);
+  }
+  function pauseNow(){
+    clearTimeout(pauseTimer); clearTimeout(segmentTimer);
+    getValidToken().then(token => { if(token) fetch('https://api.spotify.com/v1/me/player/pause', {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{}); });
+  }
+
+  // ---------- Helpers ----------
+  function trackIdFromUri(uri){ return (uri||'').split(':').pop(); }
+  function parseTime(str){
+    if(!str) return 0;
+    const parts = str.trim().split(':').map(Number);
+    if(parts.some(isNaN)) return 0;
+    if(parts.length === 2) return (parts[0]*60 + parts[1]) * 1000;
+    return (parts[0]||0) * 1000;
+  }
+  function formatTime(ms){
+    const s = Math.round(ms/1000);
+    return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0');
+  }
+
+  // ---------- Library / playlists sidebar ----------
+  async function loadMyPlaylists(){
+    const token = await getValidToken();
+    if(!token) return;
+    const res = await fetch('https://api.spotify.com/v1/me/playlists?limit=50', {headers:{Authorization:'Bearer '+token}});
+    const json = await res.json();
+    playlistList.innerHTML = '';
+    (json.items || []).forEach(pl => {
+      const el = document.createElement('div');
+      el.className = 'pl-item';
+      el.textContent = pl.name;
+      el.addEventListener('click', () => {
+        document.querySelectorAll('.pl-item').forEach(x => x.classList.remove('active'));
+        el.classList.add('active');
+        loadedPlaylistMeta.textContent = '';
+        loadPlaylistTracks(pl.id);
+      });
+      playlistList.appendChild(el);
+    });
+  }
+
+  function extractPlaylistId(input){
+    input = (input||'').trim();
+    const m = input.match(/playlist[\/:]([a-zA-Z0-9]+)/);
+    return m ? m[1].split('?')[0] : null;
+  }
+
+  loadPlaylistBtn.addEventListener('click', async () => {
+    const id = extractPlaylistId(playlistUrlInput.value);
+    if(!id){ playlistUrlInput.style.borderColor = '#c0392b'; setTimeout(()=>playlistUrlInput.style.borderColor='#333',800); return; }
+    document.querySelectorAll('.pl-item').forEach(x => x.classList.remove('active'));
+    const token = await getValidToken();
+    if(token){
+      try{
+        const res = await fetch(`https://api.spotify.com/v1/playlists/${id}?fields=name,owner.display_name`, {headers:{Authorization:'Bearer '+token}});
+        const meta = await res.json();
+        if(meta && meta.name){
+          loadedPlaylistMeta.textContent = `"${meta.name}" by ${meta.owner ? meta.owner.display_name : 'unknown'}`;
+        }
+      }catch(e){}
+    }
+    loadPlaylistTracks(id);
+  });
+  playlistUrlInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') loadPlaylistBtn.click(); });
+
+  async function loadPlaylistTracks(playlistId){
+    tracksHeading.style.display = 'block';
+    trackList.innerHTML = '<div style="color:#888;font-size:12px;padding:6px;">Loading…</div>';
+    const token = await getValidToken();
+    if(!token) return;
+    let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
+    let all = [];
+    try{
+      while(url && all.length < 300){
+        const res = await fetch(url, {headers:{Authorization:'Bearer '+token}});
+        if(!res.ok){ trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;">Could not load this playlist (it may be private).</div>'; return; }
+        const json = await res.json();
+        all = all.concat(json.items || []);
+        url = json.next;
+      }
+    }catch(e){ trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;">Could not load this playlist.</div>'; return; }
+    trackList.innerHTML = '';
+    if(!all.length){ trackList.innerHTML = '<div style="color:#888;font-size:12px;padding:6px;">No tracks found.</div>'; return; }
+    all.forEach(item => {
+      const tr = item.track;
+      if(!tr) return;
+      const art = (tr.album && tr.album.images && tr.album.images.length) ? tr.album.images[tr.album.images.length-1].url : '';
+      const artists = (tr.artists || []).map(a=>a.name).join(', ');
+      const trackData = { uri: tr.uri, name: tr.name, artist: artists, art, full: !IS_TOUCH };
+      const el = document.createElement('div');
+      el.className = 'track-item';
+      el.draggable = !IS_TOUCH;
+      el.innerHTML = `<img src="${art}" onerror="this.style.visibility='hidden'"><div class="meta"><div class="t">${tr.name}</div><div class="a">${artists}</div></div>${IS_TOUCH ? '<button class="tapadd">Add</button>' : ''}`;
+      if(!IS_TOUCH){
+        el.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('application/json', JSON.stringify(trackData));
+        });
+      } else {
+        el.querySelector('.tapadd').addEventListener('click', () => {
+          const vw = viewport.clientWidth, vh = viewport.clientHeight;
+          const x = viewport.scrollLeft + vw/2 - 115 + (Math.random()*60-30);
+          const y = viewport.scrollTop + vh/2 - 40 + (Math.random()*60-30);
+          addCardFromData(trackData, x, y);
+          sidebar.classList.remove('open');
+          viewport.classList.remove('shifted');
+        });
+      }
+      trackList.appendChild(el);
+    });
+  }
+
+  // ---------- Canvas / cards ----------
+  let cards = {};
+  let idCounter = 0;
+
+  function saveState(){
+    try{
+      const arr = Object.values(cards).map(c => ({id:c.id, uri:c.uri, x:c.x, y:c.y, name:c.name, artist:c.artist, art:c.art, full:c.full, clipStart:c.clipStart, clipEnd:c.clipEnd}));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+    }catch(e){}
+  }
+  function loadState(){
+    try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }catch(e){ return []; }
+  }
+
+  function extractTrackUri(input){
+    input = (input || '').trim();
+    let m = input.match(/track[\/:]([a-zA-Z0-9]{10,})/);
+    if(m) return 'spotify:track:' + m[1].split('?')[0];
+    return null;
+  }
+
+  let IFrameAPI = null, pendingEmbeds = [];
+  window.onSpotifyIframeApiReady = (api) => {
+    IFrameAPI = api;
+    pendingEmbeds.forEach(p => p.fn());
+    pendingEmbeds = [];
+  };
+
+  function makeCard(id, data, x, y){
+    const {uri, name, artist, art, full, clipStart, clipEnd} = data;
+    const useSdk = full && !IS_TOUCH;
+    const isClip = clipStart != null && clipEnd != null && clipEnd > clipStart;
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.dataset.id = id;
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
+
+    let tagLabel = useSdk ? 'full track' : 'preview';
+    if(isClip) tagLabel = formatTime(clipStart) + '–' + formatTime(clipEnd);
+
+    let bodyHtml;
+    if(useSdk){
+      bodyHtml = `<div class="full-card">
+        <img src="${art||''}" onerror="this.style.visibility='hidden'">
+        <div class="meta">
+          <div class="t">${name||'Unknown track'}</div>
+          <div class="a">${artist||''}</div>
+        </div>
+      </div>`;
+    } else {
+      bodyHtml = `<div class="embed-wrap">loading…</div>`;
+    }
+
+    el.innerHTML = `<div class="card-header">
+        <span class="tag">${tagLabel}</span>
+        <div class="btns">
+          <button class="clipBtn" title="Make a clip from this">✂</button>
+          <button class="del" title="Remove">✕</button>
+        </div>
+      </div>${bodyHtml}
+      <div class="clip-editor">
+        <div class="row">
+          <label>Start</label><input class="clipStartInput" type="text" placeholder="0:00" value="${clipStart!=null?formatTime(clipStart):''}">
+          <label>End</label><input class="clipEndInput" type="text" placeholder="0:30" value="${clipEnd!=null?formatTime(clipEnd):''}">
+        </div>
+        <button class="makeClipBtn">Create clip card</button>
+      </div>`;
+    canvas.appendChild(el);
+    emptyState.style.display = 'none';
+
+    const header = el.querySelector('.card-header');
+    let dragging = false, offX = 0, offY = 0;
+    function dragStart(clientX, clientY, target){
+      if(target.classList.contains('del') || target.classList.contains('clipBtn')) return false;
+      dragging = true;
+      const rect = el.getBoundingClientRect();
+      offX = clientX - rect.left; offY = clientY - rect.top;
+      return true;
+    }
+    function dragMove(clientX, clientY){
+      if(!dragging) return;
+      const canvasRect = canvas.getBoundingClientRect();
+      let nx = Math.max(0, clientX - canvasRect.left - offX);
+      let ny = Math.max(0, clientY - canvasRect.top - offY);
+      el.style.left = nx + 'px'; el.style.top = ny + 'px';
+      if(cards[id]){ cards[id].x = nx; cards[id].y = ny; }
+    }
+    function dragEnd(){ if(dragging){ dragging = false; saveState(); } }
+
+    header.addEventListener('mousedown', (e) => { if(dragStart(e.clientX, e.clientY, e.target)) e.preventDefault(); });
+    document.addEventListener('mousemove', (e) => dragMove(e.clientX, e.clientY));
+    document.addEventListener('mouseup', dragEnd);
+    header.addEventListener('touchstart', (e) => { const t = e.touches[0]; dragStart(t.clientX, t.clientY, e.target); }, {passive:true});
+    document.addEventListener('touchmove', (e) => { if(dragging){ const t = e.touches[0]; dragMove(t.clientX, t.clientY); } }, {passive:true});
+    document.addEventListener('touchend', dragEnd);
+
+    el.querySelector('.del').addEventListener('click', () => {
+      el.remove(); delete cards[id]; saveState();
+      if(Object.keys(cards).length === 0) emptyState.style.display = 'block';
+    });
+
+    const clipEditor = el.querySelector('.clip-editor');
+    el.querySelector('.clipBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      clipEditor.classList.toggle('open');
+    });
+    el.querySelector('.makeClipBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sMs = parseTime(el.querySelector('.clipStartInput').value);
+      const eMs = parseTime(el.querySelector('.clipEndInput').value);
+      if(eMs <= sMs){ alert('End time must be after start time.'); return; }
+      addCardFromData({uri, name, artist, art, full, clipStart: sMs, clipEnd: eMs}, x + 30, y + 30);
+      clipEditor.classList.remove('open');
+    });
+
+    // ---- Playback wiring ----
+    if(useSdk){
+      const startPlay = () => { el.classList.add('playing'); playFullTrack(uri, clipStart); if(isClip){ clearTimeout(segmentTimer); segmentTimer = setTimeout(pauseNow, clipEnd - clipStart); } };
+      const stopPlay = () => { el.classList.remove('playing'); schedulePause(); };
+      el.addEventListener('mouseenter', startPlay);
+      el.addEventListener('mouseleave', stopPlay);
+    } else {
+      // Embed-based playback (preview cards, and all cards on touch devices)
+      const trackId = trackIdFromUri(uri);
+      let controller = null, playing = false, segTimer = null;
+      const embedReady = () => {
+        const wrap = el.querySelector('.embed-wrap');
+        if(!wrap) return;
+        wrap.textContent = '';
+        IFrameAPI.createController(wrap, {uri, width:'100%', height: IS_TOUCH ? '80' : '80'}, (c) => {
+          controller = c;
+          controller.addListener('playback_update', e => {
+            if(e && e.data && e.data.isPaused === false) el.classList.add('playing');
+          });
+        });
+      };
+      if(IFrameAPI) embedReady(); else pendingEmbeds.push({fn: embedReady});
+
+      function startEmbed(){
+        if(!controller) return;
+        clearTimeout(segTimer);
+        if(isClip){
+          controller.seek(Math.floor(clipStart/1000));
+          controller.resume();
+          segTimer = setTimeout(() => { controller.pause(); el.classList.remove('playing'); playing = false; }, clipEnd - clipStart);
+        } else {
+          controller.resume();
+        }
+        playing = true;
+        el.classList.add('playing');
+      }
+      function stopEmbed(){
+        if(!controller) return;
+        clearTimeout(segTimer);
+        controller.pause();
+        playing = false;
+        el.classList.remove('playing');
+      }
+      if(!IS_TOUCH){
+        el.addEventListener('mouseenter', startEmbed);
+        el.addEventListener('mouseleave', stopEmbed);
+      } else {
+        el.addEventListener('click', (e) => {
+          if(e.target.closest('.card-header') || e.target.closest('.clip-editor')) return;
+          if(playing) stopEmbed(); else startEmbed();
+        });
+      }
+    }
+
+    cards[id] = {id, el, uri, name, artist, art, full, clipStart, clipEnd, x, y};
+  }
+
+  function addCardFromData(data, x, y){
+    const id = 'c' + (++idCounter) + '_' + Date.now();
+    makeCard(id, data, x, y);
+    saveState();
+  }
+
+  addBtn.addEventListener('click', () => {
+    const uri = extractTrackUri(urlInput.value);
+    if(!uri){ urlInput.style.borderColor = '#c0392b'; setTimeout(()=>urlInput.style.borderColor='#333',800); return; }
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    const x = viewport.scrollLeft + vw/2 - 115, y = viewport.scrollTop + vh/2 - 40;
+    addCardFromData({uri, full:false}, x, y);
+    urlInput.value = '';
+  });
+  urlInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') addBtn.click(); });
+
+  canvas.addEventListener('dragover', (e) => e.preventDefault());
+  canvas.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const raw = e.dataTransfer.getData('application/json');
+    if(!raw) return;
+    const data = JSON.parse(raw);
+    const canvasRect = canvas.getBoundingClientRect();
+    const x = e.clientX - canvasRect.left - 110, y = e.clientY - canvasRect.top - 30;
+    addCardFromData(data, Math.max(0,x), Math.max(0,y));
+  });
+
+  // pan (mouse + touch)
+  let panning = false, panStartX=0, panStartY=0, scrollStartX=0, scrollStartY=0;
+  function panStart(target, clientX, clientY){
+    if(target !== viewport && target !== canvas && target !== emptyState) return;
+    panning = true; viewport.classList.add('panning');
+    panStartX = clientX; panStartY = clientY;
+    scrollStartX = viewport.scrollLeft; scrollStartY = viewport.scrollTop;
+  }
+  function panMove(clientX, clientY){
+    if(!panning) return;
+    viewport.scrollLeft = scrollStartX - (clientX - panStartX);
+    viewport.scrollTop = scrollStartY - (clientY - panStartY);
+  }
+  function panEnd(){ panning = false; viewport.classList.remove('panning'); }
+  viewport.addEventListener('mousedown', (e) => panStart(e.target, e.clientX, e.clientY));
+  document.addEventListener('mousemove', (e) => panMove(e.clientX, e.clientY));
+  document.addEventListener('mouseup', panEnd);
+  viewport.addEventListener('touchstart', (e) => { const t = e.touches[0]; panStart(e.target, t.clientX, t.clientY); }, {passive:true});
+  document.addEventListener('touchmove', (e) => { if(panning){ const t = e.touches[0]; panMove(t.clientX, t.clientY); } }, {passive:true});
+  document.addEventListener('touchend', panEnd);
+
+  // ---------- UI wiring ----------
+  authBtn.addEventListener('click', () => authPanel.classList.toggle('open'));
+  connectBtn.addEventListener('click', login);
+  libraryBtn.addEventListener('click', () => {
+    sidebar.classList.toggle('open');
+    viewport.classList.toggle('shifted', sidebar.classList.contains('open'));
+  });
+
+  // ---------- init ----------
+  viewport.scrollLeft = 3000 - viewport.clientWidth/2;
+  viewport.scrollTop = 3000 - viewport.clientHeight/2;
+
+  const saved = loadState();
+  if(saved.length){
+    emptyState.style.display = 'none';
+    saved.forEach(c => { idCounter++; makeCard(c.id || ('c'+idCounter+'_'+Date.now()), c, c.x, c.y); });
+  }
+
+  const urlParams = new URLSearchParams(location.search);
+  if(urlParams.get('code')){
+    exchangeCode(urlParams.get('code'));
+  } else if(isLoggedIn()){
+    afterLogin();
+  }
+})();
+</script>
+</body>
+</html>
