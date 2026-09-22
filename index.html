@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spotify Canvas</title>
 <style>
-    :root{--bg:#121212;--panel:#1c1c1c;--card:#181818;--accent:#1db954;--text:#eee;--muted:#888;--grid:#2a2a2a;}
+  :root{--bg:#121212;--panel:#1c1c1c;--card:#181818;--accent:#1db954;--text:#eee;--muted:#888;--grid:#2a2a2a;}
   *{box-sizing:border-box;}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;}
   #toolbar{position:fixed;top:0;left:0;right:0;min-height:56px;background:var(--panel);display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;z-index:1000;border-bottom:1px solid #2a2a2a;}
@@ -257,6 +257,10 @@
   // Live playback position, tracked from the SDK's state events so full-track cards can
   // show a real, scrubbable progress bar (like the Spotify app) instead of silent hover-play.
   let sdkTrackUri = null, sdkPosition = 0, sdkDuration = 0, sdkPaused = true, sdkLastTick = 0;
+  // Which card (by id) last requested playback. Two cards can share the same track uri
+  // (a full track and a clip cut from it), so "is this card the one playing" is tracked
+  // per-card rather than per-uri.
+  let activeCardId = null;
   const transportRenderers = new Set();
   function currentEstimatedPosition(){
     if(sdkPaused) return sdkPosition;
@@ -316,9 +320,10 @@
     getValidToken().then(token => { if(token) fetch('https://api.spotify.com/v1/me/player/pause', {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{}); });
   }
 
-  // Play button + scrubbable timeline for a full (un-clipped) track card — lets you find a
-  // section by ear, like the real Spotify app, instead of typing exact start/end timestamps.
-  function wireTransport(el, uri, knownDuration){
+  // Play button + scrubbable timeline for an SDK-backed card. Used for both full (un-clipped)
+  // tracks and already-extracted clip cards — for a clip, `clipRange` scopes the timeline to
+  // just that segment (0:00 shows as clipRange.clipStart, and playback auto-pauses at the end).
+  function wireTransport(el, id, uri, knownDuration, clipRange){
     const playBtn = el.querySelector('.playBtn');
     const seekbar = el.querySelector('.seekbar');
     const seekfill = el.querySelector('.seekfill');
@@ -330,13 +335,19 @@
     const setEndBtn = el.querySelector('.setEndBtn');
     let scrubbing = false;
 
-    function isActiveTrack(){ return sdkTrackUri === uri; }
-    function totalMs(){ return knownDuration || (isActiveTrack() ? sdkDuration : 0) || 0; }
+    // "Active" means THIS card is the one currently driving playback — tracked per-card
+    // (not just per-uri) so a clip and its source full track don't fight over one indicator.
+    function isActiveTrack(){ return activeCardId === id; }
+    function totalMs(){ return clipRange ? (clipRange.clipEnd - clipRange.clipStart) : (knownDuration || (isActiveTrack() ? sdkDuration : 0) || 0); }
 
     function render(){
       if(scrubbing) return;
       const active = isActiveTrack();
-      const pos = active ? currentEstimatedPosition() : 0;
+      let pos = 0;
+      if(active){
+        const raw = currentEstimatedPosition();
+        pos = clipRange ? Math.max(0, raw - clipRange.clipStart) : raw;
+      }
       const dur = totalMs();
       const pct = dur ? Math.min(100, (pos / dur) * 100) : 0;
       seekfill.style.width = pct + '%';
@@ -348,6 +359,11 @@
     render();
     transportRenderers.add(render);
 
+    function armAutoPause(remainingMs){
+      clearTimeout(segmentTimer);
+      if(clipRange) segmentTimer = setTimeout(() => { pauseNow(); render(); }, Math.max(0, remainingMs));
+    }
+
     playBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const token = await getValidToken();
@@ -355,12 +371,17 @@
       if(isActiveTrack() && !sdkPaused){
         await fetch('https://api.spotify.com/v1/me/player/pause', {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
         sdkPaused = true; sdkLastTick = Date.now();
+        clearTimeout(segmentTimer);
       } else if(isActiveTrack() && sdkPaused){
         await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
         sdkPaused = false; sdkLastTick = Date.now();
+        if(clipRange) armAutoPause(clipRange.clipEnd - currentEstimatedPosition());
       } else {
-        await playFullTrack(uri, 0);
-        sdkTrackUri = uri; sdkPosition = 0; sdkDuration = knownDuration || sdkDuration; sdkPaused = false; sdkLastTick = Date.now();
+        activeCardId = id;
+        const startAt = clipRange ? clipRange.clipStart : 0;
+        await playFullTrack(uri, startAt);
+        sdkTrackUri = uri; sdkPosition = startAt; sdkDuration = knownDuration || sdkDuration; sdkPaused = false; sdkLastTick = Date.now();
+        if(clipRange) armAutoPause(clipRange.clipEnd - clipRange.clipStart);
       }
       render();
     });
@@ -371,16 +392,19 @@
       return Math.floor(pct * totalMs());
     }
 
-    async function seekTo(targetMs){
+    async function seekTo(localMs){
       const token = await getValidToken();
       if(!token) return;
-      if(isActiveTrack()){
-        await fetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${targetMs}&device_id=${deviceId}`, {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
-        sdkPosition = targetMs; sdkLastTick = Date.now(); sdkPaused = false;
+      const absoluteMs = clipRange ? clipRange.clipStart + localMs : localMs;
+      activeCardId = id;
+      if(sdkTrackUri === uri && deviceId){
+        await fetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${absoluteMs}&device_id=${deviceId}`, {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+        sdkPosition = absoluteMs; sdkLastTick = Date.now(); sdkPaused = false;
       } else {
-        await playFullTrack(uri, targetMs);
-        sdkTrackUri = uri; sdkPosition = targetMs; sdkDuration = knownDuration || sdkDuration; sdkPaused = false; sdkLastTick = Date.now();
+        await playFullTrack(uri, absoluteMs);
+        sdkTrackUri = uri; sdkPosition = absoluteMs; sdkDuration = knownDuration || sdkDuration; sdkPaused = false; sdkLastTick = Date.now();
       }
+      if(clipRange) armAutoPause(clipRange.clipEnd - absoluteMs);
       render();
     }
 
@@ -581,15 +605,15 @@
           <div class="a">${artist||''}</div>
         </div>
       </div>`;
-      // Non-clip full-track cards get a real play button + scrubbable timeline (like the
-      // Spotify app) so you can find a section by ear instead of typing exact timestamps.
-      if(!isClip){
-        bodyHtml += `<div class="transport">
-          <button class="playBtn" type="button">▶</button>
-          <div class="seekbar"><div class="seekfill"></div><div class="seekhandle"></div></div>
-          <span class="timeLabel">0:00 / ${formatTime(duration||0)}</span>
-        </div>`;
-      }
+      // Every SDK-backed card — full track or already-extracted clip — gets a real play
+      // button + scrubbable timeline (like the Spotify app). For a clip the timeline is
+      // scoped to just that segment, so "0:00" is the clip's start, not the song's.
+      const transportTotal = isClip ? (clipEnd - clipStart) : (duration||0);
+      bodyHtml += `<div class="transport">
+        <button class="playBtn" type="button">▶</button>
+        <div class="seekbar"><div class="seekfill"></div><div class="seekhandle"></div></div>
+        <span class="timeLabel">0:00 / ${formatTime(transportTotal)}</span>
+      </div>`;
     } else {
       bodyHtml = `<div class="embed-wrap">loading…</div>`;
     }
@@ -664,15 +688,10 @@
     }
 
     // ---- Playback wiring ----
-    if(useSdk && isClip){
-      // Already-extracted clip cards stay simple: hover plays just that segment.
-      const startPlay = () => { el.classList.add('playing'); playFullTrack(uri, clipStart); clearTimeout(segmentTimer); segmentTimer = setTimeout(pauseNow, clipEnd - clipStart); };
-      const stopPlay = () => { el.classList.remove('playing'); schedulePause(); };
-      el.addEventListener('mouseenter', startPlay);
-      el.addEventListener('mouseleave', stopPlay);
-    } else if(useSdk){
-      // Full (un-clipped) track cards get a real play button + scrubbable timeline.
-      wireTransport(el, uri, duration);
+    if(useSdk){
+      // Real play button + scrubbable timeline, for both full tracks and extracted clips
+      // (a clip's timeline is scoped to its own start/end and auto-pauses at the end).
+      wireTransport(el, id, uri, duration, isClip ? {clipStart, clipEnd} : null);
     } else {
       // Embed-based playback (preview cards, and all cards on touch devices)
       const trackId = trackIdFromUri(uri);
