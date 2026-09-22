@@ -352,21 +352,30 @@
     trackList.innerHTML = '<div style="color:#888;font-size:12px;padding:6px;">Loading…</div>';
     const token = await getValidToken();
     if(!token) return;
-    let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
+    // Spotify retired the standalone /playlists/{id}/tracks endpoint for new apps (403s),
+    // so tracks are fetched via the main playlist resource with a `fields` filter instead —
+    // tracks live under items.items[].item there (renamed from the old items[].track shape).
+    const fields = encodeURIComponent('items(items(item(uri,name,artists.name,album.images))),items.offset,items.limit,items.total');
+    let offset = 0;
+    const limit = 100;
     let all = [];
+    let total = Infinity;
     try{
-      while(url && all.length < 300){
+      while(offset < total && all.length < 300){
+        const url = `https://api.spotify.com/v1/playlists/${playlistId}?fields=${fields}&offset=${offset}&limit=${limit}`;
         const res = await fetch(url, {headers:{Authorization:'Bearer '+token}});
         if(!res.ok){ trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;">Could not load this playlist (it may be private).</div>'; return; }
         const json = await res.json();
-        all = all.concat(json.items || []);
-        url = json.next;
+        const block = json.items || {};
+        all = all.concat(block.items || []);
+        total = block.total != null ? block.total : all.length;
+        offset += limit;
       }
     }catch(e){ trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;">Could not load this playlist.</div>'; return; }
     trackList.innerHTML = '';
     if(!all.length){ trackList.innerHTML = '<div style="color:#888;font-size:12px;padding:6px;">No tracks found.</div>'; return; }
-    all.forEach(item => {
-      const tr = item.track;
+    all.forEach(wrapper => {
+      const tr = wrapper.item;
       if(!tr) return;
       const art = (tr.album && tr.album.images && tr.album.images.length) ? tr.album.images[tr.album.images.length-1].url : '';
       const artists = (tr.artists || []).map(a=>a.name).join(', ');
