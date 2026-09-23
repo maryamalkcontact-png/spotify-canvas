@@ -661,30 +661,33 @@
     trackList.innerHTML = '<div style="color:#888;font-size:12px;padding:6px;">Loading…</div>';
     const token = await getValidToken();
     if(!token) return;
-    // Spotify retired the standalone /playlists/{id}/tracks endpoint for new apps (403s),
-    // so tracks are fetched via the main playlist resource with a `fields` filter instead —
-    // tracks live under items.items[].item there (renamed from the old items[].track shape).
-    const fields = encodeURIComponent('items(items(item(uri,name,artists.name,album.images,duration_ms))),items.offset,items.limit,items.total');
-    let offset = 0;
-    const limit = 100;
+    // A playlist's tracks live under its "tracks" paging object (tracks.items[].track) —
+    // not a top-level "items" field — so a wrong field name here silently returns nothing
+    // rather than an error, which is why some playlists showed "No tracks found".
+    const fields = encodeURIComponent('tracks.items(track(uri,name,artists.name,album.images,duration_ms)),tracks.next,tracks.total');
     let all = [];
-    let total = Infinity;
+    let url = `https://api.spotify.com/v1/playlists/${playlistId}?fields=${fields}`;
+    let firstPage = true;
     try{
-      while(offset < total && all.length < 300){
-        const url = `https://api.spotify.com/v1/playlists/${playlistId}?fields=${fields}&offset=${offset}&limit=${limit}`;
+      while(url && all.length < 300){
         const res = await fetch(url, {headers:{Authorization:'Bearer '+token}});
-        if(!res.ok){ trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;">Could not load this playlist (it may be private).</div>'; return; }
+        if(!res.ok){
+          if(firstPage){ trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;">Could not load this playlist (it may be private).</div>'; return; }
+          break; // a later page failed to load — keep whatever tracks we already have
+        }
         const json = await res.json();
-        const block = json.items || {};
+        // The first request nests the paging object under "tracks"; the "next" link it
+        // returns points straight at a paging object with items/next at the top level.
+        const block = firstPage ? (json.tracks || {}) : json;
         all = all.concat(block.items || []);
-        total = block.total != null ? block.total : all.length;
-        offset += limit;
+        url = block.next || null;
+        firstPage = false;
       }
-    }catch(e){ trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;">Could not load this playlist.</div>'; return; }
+    }catch(e){ if(!all.length){ trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;">Could not load this playlist.</div>'; return; } }
     trackList.innerHTML = '';
     if(!all.length){ trackList.innerHTML = '<div style="color:#888;font-size:12px;padding:6px;">No tracks found.</div>'; return; }
     all.forEach(wrapper => {
-      const tr = wrapper.item;
+      const tr = wrapper.track;
       if(!tr) return;
       const art = (tr.album && tr.album.images && tr.album.images.length) ? tr.album.images[tr.album.images.length-1].url : '';
       const artists = (tr.artists || []).map(a=>a.name).join(', ');
