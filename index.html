@@ -397,12 +397,14 @@
 
   function isLoggedIn(){ const t = getTokens(); return !!(t && t.refresh_token); }
 
+  let meId = null;
   async function afterLogin(){
     authPanel.classList.remove('open');
     const token = await getValidToken();
     if(!token) return;
     const res = await fetch('https://api.spotify.com/v1/me', {headers:{Authorization:'Bearer '+token}});
     const me = await res.json();
+    meId = me.id || null;
     statusEl.textContent = 'Connected as ' + (me.display_name || me.id);
     authBtn.textContent = 'Reconnect';
     loadMyPlaylists();
@@ -661,13 +663,19 @@
     trackList.innerHTML = '<div style="color:#888;font-size:12px;padding:6px;">Loading…</div>';
     const token = await getValidToken();
     if(!token) return;
-    // A playlist's tracks live under its "tracks" paging object (tracks.items[].track) —
-    // not a top-level "items" field — so a wrong field name here silently returns nothing
-    // rather than an error, which is why some playlists showed "No tracks found".
-    const fields = encodeURIComponent('tracks.items(track(uri,name,artists.name,album.images,duration_ms)),tracks.next,tracks.total');
+    // As of Spotify's Feb 2026 API migration, a playlist's track content lives under an
+    // "items" paging object (items.items[].item) — the old "tracks"/"track" names from
+    // before that migration were renamed. On top of that, Spotify now only returns that
+    // content for playlists the connected account owns or collaborates on; a playlist the
+    // account merely follows (created by someone else) comes back with the items field
+    // simply absent (200 OK, no error) rather than a helpful error, which is why this also
+    // checks the playlist owner against the connected account instead of just trusting an
+    // empty result.
+    const fields = encodeURIComponent('owner.id,items.items(item(uri,name,artists.name,album.images,duration_ms)),items.next,items.total');
     let all = [];
     let url = `https://api.spotify.com/v1/playlists/${playlistId}?fields=${fields}`;
     let firstPage = true;
+    let ownerId = null;
     try{
       while(url && all.length < 300){
         const res = await fetch(url, {headers:{Authorization:'Bearer '+token}});
@@ -676,18 +684,26 @@
           break; // a later page failed to load — keep whatever tracks we already have
         }
         const json = await res.json();
-        // The first request nests the paging object under "tracks"; the "next" link it
+        if(firstPage) ownerId = (json.owner && json.owner.id) || null;
+        // The first request nests the paging object under "items"; the "next" link it
         // returns points straight at a paging object with items/next at the top level.
-        const block = firstPage ? (json.tracks || {}) : json;
+        const block = firstPage ? (json.items || {}) : json;
         all = all.concat(block.items || []);
         url = block.next || null;
         firstPage = false;
       }
     }catch(e){ if(!all.length){ trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;">Could not load this playlist.</div>'; return; } }
     trackList.innerHTML = '';
-    if(!all.length){ trackList.innerHTML = '<div style="color:#888;font-size:12px;padding:6px;">No tracks found.</div>'; return; }
+    if(!all.length){
+      if(ownerId && meId && ownerId !== meId){
+        trackList.innerHTML = '<div style="color:#c0392b;font-size:12px;padding:6px;line-height:1.4;">Spotify only lets apps read the songs in playlists you created or collaborate on. This one belongs to another account, so its tracks can\'t be loaded here — ask the owner to add you as a collaborator, or save your own copy of it in Spotify and load that copy instead.</div>';
+      } else {
+        trackList.innerHTML = '<div style="color:#888;font-size:12px;padding:6px;">No tracks found.</div>';
+      }
+      return;
+    }
     all.forEach(wrapper => {
-      const tr = wrapper.track;
+      const tr = wrapper.item;
       if(!tr) return;
       const art = (tr.album && tr.album.images && tr.album.images.length) ? tr.album.images[tr.album.images.length-1].url : '';
       const artists = (tr.artists || []).map(a=>a.name).join(', ');
