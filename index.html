@@ -83,6 +83,17 @@
   .text-body{padding:12px;font-size:14px;line-height:1.5;color:var(--text);min-height:60px;outline:none;white-space:pre-wrap;word-break:break-word;border-radius:0 0 10px 10px;cursor:text;}
   .text-body:empty:before{content:'Type something…';color:var(--muted);}
 
+  /* Freeform text layers (Figma-style): no card box at rest — just the text itself,
+     floating directly on the canvas. A dashed outline and small delete button only
+     appear on hover or while the layer is selected/being edited. */
+  .text-card{background:transparent;border:none;box-shadow:none;}
+  .text-card .text-body{padding:6px 8px;min-height:0;border-radius:4px;}
+  .text-card:hover .text-body, .text-card.selected .text-body{outline:1px dashed rgba(255,255,255,.28);outline-offset:2px;}
+  .text-card.dragging .text-body{cursor:grabbing;}
+  .text-card .del{position:absolute;top:-10px;right:-10px;width:20px;height:20px;background:#2a2a2a;border:1px solid #444;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);cursor:pointer;padding:0;opacity:0;transition:opacity .12s;}
+  .text-card:hover .del, .text-card.selected .del{opacity:1;}
+  .text-card .del:hover{background:#c0392b;color:#fff;}
+
   .empty-state{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:var(--muted);pointer-events:none;width:380px;}
   .empty-state h2{color:#555;font-weight:500;font-size:16px;}
 
@@ -828,25 +839,124 @@
     pendingEmbeds = [];
   };
 
-  function makeTextCard(id, data, x, y){
+  // Shared selection state for text layers: only one can be "selected" (dashed outline +
+  // visible delete button) at a time, matching a single-selection canvas tool like Figma.
+  let selectedTextId = null;
+  function deselectText(){
+    if(selectedTextId && cards[selectedTextId]){
+      const prevEl = cards[selectedTextId].el;
+      prevEl.classList.remove('selected');
+      const prevBody = prevEl.querySelector('.text-body');
+      if(prevBody && document.activeElement === prevBody) prevBody.blur();
+    }
+    selectedTextId = null;
+  }
+  // Clicking anywhere outside the currently-selected text layer deselects it.
+  document.addEventListener('mousedown', (e) => {
+    if(selectedTextId && cards[selectedTextId] && !cards[selectedTextId].el.contains(e.target)) deselectText();
+  });
+  document.addEventListener('touchstart', (e) => {
+    if(selectedTextId && cards[selectedTextId] && !cards[selectedTextId].el.contains(e.target)) deselectText();
+  }, {passive:true});
+
+  function makeTextCard(id, data, x, y, autoFocus){
     const el = document.createElement('div');
     el.className = 'card text-card';
     el.dataset.id = id;
     el.style.left = x + 'px';
     el.style.top = y + 'px';
-    el.innerHTML = `<div class="card-header">
-        <span class="tag">Text</span>
-        <div class="btns"><button class="del" title="Remove">✕</button></div>
-      </div>
+    el.innerHTML = `<button class="del" title="Remove">✕</button>
       <div class="text-body" contenteditable="true" spellcheck="false"></div>`;
     canvas.appendChild(el);
     emptyState.style.display = 'none';
 
     const body = el.querySelector('.text-body');
+    const delBtn = el.querySelector('.del');
     body.textContent = data.text || '';
-    // Clicking/typing in the text itself should edit it, not pan the canvas or start a drag.
-    body.addEventListener('mousedown', (e) => e.stopPropagation());
-    body.addEventListener('touchstart', (e) => e.stopPropagation(), {passive:true});
+
+    function select(){
+      if(selectedTextId !== id) deselectText();
+      selectedTextId = id;
+      el.classList.add('selected');
+    }
+    // Place the text cursor at a specific screen point, for a natural "click to edit
+    // right where you clicked" feel rather than always landing at the start/end.
+    function focusAt(clientX, clientY){
+      body.focus();
+      let range = null;
+      if(document.caretRangeFromPoint) range = document.caretRangeFromPoint(clientX, clientY);
+      else if(document.caretPositionFromPoint){
+        const pos = document.caretPositionFromPoint(clientX, clientY);
+        if(pos){ range = document.createRange(); range.setStart(pos.offsetNode, pos.offset); }
+      }
+      if(range){ const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); }
+    }
+
+    // Click-to-select / click-again-to-edit / drag-to-move, all disambiguated by mouse
+    // movement — the same gesture vocabulary a real canvas tool uses for text layers,
+    // rather than a fixed drag handle around a card.
+    let dragging = false, dragStarted = false, startX = 0, startY = 0, offX = 0, offY = 0;
+    body.addEventListener('mousedown', (e) => {
+      if(document.activeElement === body) return; // already editing — let native caret/selection work normally
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true; dragStarted = false;
+      startX = e.clientX; startY = e.clientY;
+      const rect = el.getBoundingClientRect();
+      offX = (e.clientX - rect.left) / camZoom; offY = (e.clientY - rect.top) / camZoom;
+    });
+    document.addEventListener('mousemove', (e) => {
+      if(!dragging) return;
+      if(!dragStarted && Math.hypot(e.clientX - startX, e.clientY - startY) > 4){ dragStarted = true; select(); el.classList.add('dragging'); }
+      if(dragStarted){
+        const canvasRect = canvas.getBoundingClientRect();
+        const nx = Math.max(0, (e.clientX - canvasRect.left) / camZoom - offX);
+        const ny = Math.max(0, (e.clientY - canvasRect.top) / camZoom - offY);
+        el.style.left = nx + 'px'; el.style.top = ny + 'px';
+        if(cards[id]){ cards[id].x = nx; cards[id].y = ny; }
+      }
+    });
+    document.addEventListener('mouseup', (e) => {
+      if(!dragging) return;
+      dragging = false;
+      el.classList.remove('dragging');
+      if(dragStarted){ saveState(); }
+      else if(selectedTextId === id){ focusAt(e.clientX, e.clientY); }
+      else { select(); }
+    });
+
+    // Touch: mirrors the mouse gesture (tap to select, tap again to edit, drag to move),
+    // but without preventDefault so a plain tap can still fall through to the browser's
+    // own tap-to-focus keyboard behavior — simpler is better on a touch keyboard.
+    let touchDragging = false, touchDragStarted = false, tStartX = 0, tStartY = 0, tOffX = 0, tOffY = 0;
+    body.addEventListener('touchstart', (e) => {
+      if(document.activeElement === body) return;
+      const t = e.touches[0];
+      touchDragging = true; touchDragStarted = false;
+      tStartX = t.clientX; tStartY = t.clientY;
+      const rect = el.getBoundingClientRect();
+      tOffX = (t.clientX - rect.left) / camZoom; tOffY = (t.clientY - rect.top) / camZoom;
+    }, {passive:true});
+    document.addEventListener('touchmove', (e) => {
+      if(!touchDragging) return;
+      const t = e.touches[0];
+      if(!touchDragStarted && Math.hypot(t.clientX - tStartX, t.clientY - tStartY) > 6){ touchDragStarted = true; select(); el.classList.add('dragging'); }
+      if(touchDragStarted){
+        const canvasRect = canvas.getBoundingClientRect();
+        const nx = Math.max(0, (t.clientX - canvasRect.left) / camZoom - tOffX);
+        const ny = Math.max(0, (t.clientY - canvasRect.top) / camZoom - tOffY);
+        el.style.left = nx + 'px'; el.style.top = ny + 'px';
+        if(cards[id]){ cards[id].x = nx; cards[id].y = ny; }
+      }
+    }, {passive:true});
+    document.addEventListener('touchend', () => {
+      if(!touchDragging) return;
+      touchDragging = false;
+      el.classList.remove('dragging');
+      if(touchDragStarted){ saveState(); }
+      else if(selectedTextId !== id){ select(); }
+    });
+
     body.addEventListener('input', () => {
       // innerText (not textContent) so line breaks typed with Enter survive a save/reload —
       // contenteditable represents them as <div>/<br> boundaries, which only innerText reflects.
@@ -854,18 +964,20 @@
       saveState();
     });
 
-    wireDrag(el, el.querySelector('.card-header'), id);
-
-    el.querySelector('.del').addEventListener('click', () => {
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if(selectedTextId === id) selectedTextId = null;
       el.remove(); delete cards[id]; saveState();
       if(Object.keys(cards).length === 0) emptyState.style.display = 'block';
     });
 
     cards[id] = {id, el, type:'text', text: data.text || '', x, y};
+
+    if(autoFocus){ select(); body.focus(); }
   }
 
-  function makeCard(id, data, x, y){
-    if(data.type === 'text') return makeTextCard(id, data, x, y);
+  function makeCard(id, data, x, y, autoFocus){
+    if(data.type === 'text') return makeTextCard(id, data, x, y, autoFocus);
     const {uri, name, artist, art, full, clipStart, clipEnd, duration} = data;
     const useSdk = full && !IS_TOUCH;
     const isClip = clipStart != null && clipEnd != null && clipEnd > clipStart;
@@ -1001,9 +1113,9 @@
     cards[id] = {id, el, uri, name, artist, art, full, clipStart, clipEnd, duration, x, y};
   }
 
-  function addCardFromData(data, x, y){
+  function addCardFromData(data, x, y, autoFocus){
     const id = 'c' + (++idCounter) + '_' + Date.now();
-    makeCard(id, data, x, y);
+    makeCard(id, data, x, y, autoFocus);
     saveState();
   }
 
@@ -1018,7 +1130,7 @@
 
   addTextBtn.addEventListener('click', () => {
     const center = viewportCenterToCanvas();
-    addCardFromData({type:'text', text:''}, center.x - 115, center.y - 40);
+    addCardFromData({type:'text', text:''}, center.x - 115, center.y - 40, true);
   });
 
   canvas.addEventListener('dragover', (e) => e.preventDefault());
