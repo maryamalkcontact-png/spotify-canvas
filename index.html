@@ -5,79 +5,96 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spotify Canvas</title>
 <style>
-  :root{--bg:#121212;--panel:#1c1c1c;--card:#181818;--accent:#1db954;--text:#eee;--muted:#888;--grid:#2a2a2a;}
+  :root{
+    --bg:#121212;--panel:#1c1c1c;--input-bg:#0f0f0f;--card:#181818;--card-header:#202020;
+    --hover-1:#252525;--hover-2:#333;--hover-3:#3a3a3a;--border:#333;--border-soft:#2a2a2a;
+    --secondary-bg:#2a2a2a;--grid:#2a2a2a;--canvas-bg:#151515;
+    --accent:#1db954;--accent-hover:#1ed760;--text:#eee;--muted:#888;--muted2:#555;
+    --shadow:rgba(0,0,0,.5);--shadow-strong:rgba(0,0,0,.6);--outline-dash:rgba(255,255,255,.28);
+    --scrub-track:#333;--scrub-handle:#fff;
+  }
+  :root[data-theme="light"]{
+    --bg:#f5f5f7;--panel:#ffffff;--input-bg:#eef0f2;--card:#ffffff;--card-header:#f0f1f3;
+    --hover-1:#eceef0;--hover-2:#e2e4e7;--hover-3:#dadde0;--border:#dcdce0;--border-soft:#e3e4e7;
+    --secondary-bg:#e7e8ea;--grid:#d8d9dc;--canvas-bg:#eceef0;
+    --accent:#1db954;--accent-hover:#17a34a;--text:#1c1c1e;--muted:#68686d;--muted2:#a3a3a8;
+    --shadow:rgba(20,20,30,.10);--shadow-strong:rgba(20,20,30,.16);--outline-dash:rgba(0,0,0,.25);
+    --scrub-track:#dcdce0;--scrub-handle:#1c1c1e;
+  }
   *{box-sizing:border-box;}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;}
-  #toolbar{position:fixed;top:0;left:0;right:0;min-height:56px;background:var(--panel);display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;z-index:1000;border-bottom:1px solid #2a2a2a;}
-  #toolbar input{flex:0 1 300px;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:8px 10px;border-radius:6px;font-size:13px;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden;transition:background .15s,color .15s;}
+  #toolbar{position:fixed;top:0;left:0;right:0;min-height:56px;background:var(--panel);display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;z-index:1000;border-bottom:1px solid var(--border-soft);}
+  #toolbar input{flex:0 1 300px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;font-size:13px;}
   #toolbar input:focus{outline:1px solid var(--accent);}
   #toolbar button{background:var(--accent);border:none;color:#000;font-weight:600;padding:8px 14px;border-radius:20px;cursor:pointer;font-size:13px;white-space:nowrap;}
-  #toolbar button:hover{background:#1ed760;}
-  #toolbar button.secondary{background:#2a2a2a;color:#eee;}
-  #toolbar button.secondary:hover{background:#3a3a3a;}
+  #toolbar button:hover{background:var(--accent-hover);}
+  #toolbar button.secondary{background:var(--secondary-bg);color:var(--text);}
+  #toolbar button.secondary:hover{background:var(--hover-3);}
   #status{font-size:12px;color:var(--muted);white-space:nowrap;}
   #hint{color:var(--muted);font-size:11px;margin-left:auto;white-space:nowrap;}
   @media (max-width:760px){ #hint{display:none;} #toolbar input{flex:1 1 140px;} }
 
-  #sidebar{position:fixed;top:56px;left:0;bottom:0;width:280px;max-width:80vw;background:var(--panel);border-right:1px solid #2a2a2a;overflow-y:auto;z-index:900;padding:10px;display:none;}
+  #sidebar{position:fixed;top:56px;left:0;bottom:0;width:280px;max-width:80vw;background:var(--panel);border-right:1px solid var(--border-soft);overflow-y:auto;z-index:900;padding:10px;display:none;}
   #sidebar.open{display:block;}
   #sidebar h3{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:14px 0 6px;}
   #loadPlaylistRow{display:flex;gap:6px;}
-  #loadPlaylistRow input{flex:1;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:6px 8px;border-radius:6px;font-size:12px;min-width:0;}
+  #loadPlaylistRow input{flex:1;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:6px;font-size:12px;min-width:0;}
   #loadPlaylistRow button{background:var(--accent);border:none;color:#000;font-weight:600;padding:6px 10px;border-radius:14px;font-size:12px;cursor:pointer;}
   #loadedPlaylistMeta{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4;}
   .pl-item{padding:8px 8px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;}
-  .pl-item:hover{background:#252525;}
-  .pl-item.active{background:#252525;color:var(--accent);}
-  .track-item{display:flex;align-items:center;gap:8px;padding:6px 6px;border-radius:6px;cursor:grab;font-size:12px;}
-  .track-item:hover{background:#252525;}
+  .pl-item:hover{background:var(--hover-1);}
+  .pl-item.active{background:var(--hover-1);color:var(--accent);}
+  .track-item{display:flex;align-items:center;gap:8px;padding:6px 6px;border-radius:6px;cursor:pointer;font-size:12px;}
+  .track-item:hover{background:var(--hover-1);}
+  .track-item.playing{background:rgba(29,185,84,.14);}
+  .track-item.playing .t{color:var(--accent);}
   .track-item img{width:32px;height:32px;border-radius:4px;flex-shrink:0;}
   .track-item .meta{overflow:hidden;flex:1;}
   .track-item .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .track-item .a{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .track-item .tapadd{background:#2a2a2a;border:none;color:var(--accent);border-radius:10px;font-size:10px;padding:4px 8px;cursor:pointer;flex-shrink:0;}
+  .track-item .tapadd{background:var(--secondary-bg);border:none;color:var(--accent);border-radius:10px;font-size:10px;padding:4px 8px;cursor:pointer;flex-shrink:0;}
 
   #viewport{position:absolute;top:56px;left:0;right:0;bottom:0;overflow:hidden;cursor:grab;
-    background-color:#151515;transition:left .15s;}
+    background-color:var(--canvas-bg);transition:left .15s;}
   #viewport.shifted{left:280px;}
   #viewport.panning{cursor:grabbing;}
   #canvas{position:absolute;top:0;left:0;width:6000px;height:6000px;transform-origin:0 0;
     background-image:radial-gradient(var(--grid) 1px, transparent 1px);
-    background-size:24px 24px;background-color:#151515;}
+    background-size:24px 24px;background-color:var(--canvas-bg);}
 
-  #zoomControls{position:fixed;bottom:16px;right:16px;background:var(--panel);border:1px solid #333;border-radius:20px;padding:4px 6px;display:flex;align-items:center;gap:2px;z-index:1000;box-shadow:0 4px 14px rgba(0,0,0,.5);}
+  #zoomControls{position:fixed;bottom:16px;right:16px;background:var(--panel);border:1px solid var(--border);border-radius:20px;padding:4px 6px;display:flex;align-items:center;gap:2px;z-index:1000;box-shadow:0 4px 14px var(--shadow);}
   #zoomControls button{background:none;border:none;color:var(--text);font-size:16px;width:26px;height:26px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
-  #zoomControls button:hover{background:#333;}
+  #zoomControls button:hover{background:var(--hover-2);}
   #zoomLabel{font-size:11px;color:var(--muted);min-width:38px;text-align:center;cursor:pointer;user-select:none;}
 
-  .card{position:absolute;width:230px;background:var(--card);border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.5);overflow:visible;border:1px solid #2a2a2a;user-select:none;}
-  .card.playing{box-shadow:0 0 0 2px var(--accent),0 4px 14px rgba(0,0,0,.5);}
-  .card-header{display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:#202020;cursor:move;font-size:11px;color:var(--muted);border-radius:10px 10px 0 0;}
+  .card{position:absolute;width:230px;background:var(--card);border-radius:10px;box-shadow:0 4px 14px var(--shadow);overflow:visible;border:1px solid var(--border-soft);user-select:none;}
+  .card.playing{box-shadow:0 0 0 2px var(--accent),0 4px 14px var(--shadow);}
+  .card-header{display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:var(--card-header);cursor:move;font-size:11px;color:var(--muted);border-radius:10px 10px 0 0;}
   .card-header .tag{color:var(--accent);text-transform:uppercase;letter-spacing:.5px;font-size:9px;}
   .card-header .btns{display:flex;gap:4px;align-items:center;}
   .card-header button{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:2px 5px;border-radius:4px;}
-  .card-header button:hover{background:#333;color:#fff;}
+  .card-header button:hover{background:var(--hover-2);color:var(--text);}
   .card-header .del:hover{background:#c0392b;color:#fff;}
-  .embed-wrap{width:100%;min-height:80px;background:#0a0a0a;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;border-radius:0 0 10px 10px;overflow:hidden;}
+  .embed-wrap{width:100%;min-height:80px;background:var(--input-bg);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;border-radius:0 0 10px 10px;overflow:hidden;}
   .full-card{display:flex;gap:10px;padding:10px;align-items:center;cursor:pointer;}
   .full-card img{width:56px;height:56px;border-radius:6px;flex-shrink:0;}
   .full-card .meta{overflow:hidden;}
   .full-card .t{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .full-card .a{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .full-card .badge{margin-top:4px;font-size:9px;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;}
-  .clip-editor{padding:8px;background:#141414;border-top:1px solid #2a2a2a;display:none;border-radius:0 0 10px 10px;}
+  .clip-editor{padding:8px;background:var(--input-bg);border-top:1px solid var(--border-soft);display:none;border-radius:0 0 10px 10px;}
   .clip-editor.open{display:block;}
   .clip-editor .timerow{display:flex;gap:6px;align-items:center;margin-bottom:6px;}
-  .clip-editor input{width:56px;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:4px 6px;border-radius:4px;font-size:11px;text-align:center;}
+  .clip-editor input{width:56px;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;font-size:11px;text-align:center;}
   .clip-editor .makeClipBtn{width:100%;background:var(--accent);border:none;color:#000;font-weight:600;padding:6px;border-radius:6px;font-size:11px;cursor:pointer;}
-  .clip-editor .setBtn{width:auto;flex-shrink:0;background:#2a2a2a;border:none;color:var(--accent);font-weight:600;padding:4px 9px;border-radius:12px;font-size:10px;cursor:pointer;}
+  .clip-editor .setBtn{width:auto;flex-shrink:0;background:var(--secondary-bg);border:none;color:var(--accent);font-weight:600;padding:4px 9px;border-radius:12px;font-size:10px;cursor:pointer;}
   .clip-editor label{font-size:10px;color:var(--muted);flex-shrink:0;}
 
   .transport{display:flex;align-items:center;gap:8px;padding:0 10px 10px;}
   .playBtn{background:var(--accent);border:none;color:#000;width:26px;height:26px;min-width:26px;border-radius:50%;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}
-  .seekbar{flex:1;height:6px;background:#333;border-radius:3px;position:relative;cursor:pointer;}
+  .seekbar{flex:1;height:6px;background:var(--scrub-track);border-radius:3px;position:relative;cursor:pointer;}
   .seekfill{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:3px;width:0%;pointer-events:none;}
-  .seekhandle{position:absolute;top:50%;width:10px;height:10px;background:#fff;border-radius:50%;transform:translate(-50%,-50%);left:0%;box-shadow:0 0 2px rgba(0,0,0,.6);pointer-events:none;}
+  .seekhandle{position:absolute;top:50%;width:10px;height:10px;background:var(--scrub-handle);border-radius:50%;transform:translate(-50%,-50%);left:0%;box-shadow:0 0 2px var(--shadow-strong);pointer-events:none;}
   .timeLabel{font-size:9px;color:var(--muted);white-space:nowrap;flex-shrink:0;}
 
   .text-body{padding:12px;font-size:14px;line-height:1.5;color:var(--text);min-height:60px;outline:none;white-space:pre-wrap;word-break:break-word;border-radius:0 0 10px 10px;cursor:text;}
@@ -88,22 +105,22 @@
      appear on hover or while the layer is selected/being edited. */
   .text-card{background:transparent;border:none;box-shadow:none;}
   .text-card .text-body{padding:6px 8px;min-height:0;border-radius:4px;}
-  .text-card:hover .text-body, .text-card.selected .text-body{outline:1px dashed rgba(255,255,255,.28);outline-offset:2px;}
+  .text-card:hover .text-body, .text-card.selected .text-body{outline:1px dashed var(--outline-dash);outline-offset:2px;}
   .text-card.dragging .text-body{cursor:grabbing;}
-  .text-card .del{position:absolute;top:-10px;right:-10px;width:20px;height:20px;background:#2a2a2a;border:1px solid #444;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);cursor:pointer;padding:0;opacity:0;transition:opacity .12s;}
+  .text-card .del{position:absolute;top:-10px;right:-10px;width:20px;height:20px;background:var(--secondary-bg);border:1px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);cursor:pointer;padding:0;opacity:0;transition:opacity .12s;}
   .text-card:hover .del, .text-card.selected .del{opacity:1;}
   .text-card .del:hover{background:#c0392b;color:#fff;}
 
   /* Floating formatting toolbar for a selected text layer: size, bold/italic, and
      alignment, applied to the whole layer (not per-character rich text) — simpler
      and matches treating a text layer as a single object, like Figma's text tool. */
-  .text-toolbar{position:absolute;left:0;bottom:calc(100% + 16px);display:none;align-items:center;gap:2px;background:#242424;border:1px solid #3a3a3a;border-radius:8px;padding:4px;box-shadow:0 4px 14px rgba(0,0,0,.5);white-space:nowrap;z-index:10;}
+  .text-toolbar{position:absolute;left:0;bottom:calc(100% + 16px);display:none;align-items:center;gap:2px;background:var(--card-header);border:1px solid var(--hover-3);border-radius:8px;padding:4px;box-shadow:0 4px 14px var(--shadow);white-space:nowrap;z-index:10;}
   .text-card.selected .text-toolbar{display:flex;}
   .text-toolbar button{background:none;border:none;color:var(--text);font-size:12px;width:24px;height:24px;border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0;}
-  .text-toolbar button:hover{background:#3a3a3a;}
+  .text-toolbar button:hover{background:var(--hover-3);}
   .text-toolbar button.active{background:var(--accent);color:#000;}
   .text-toolbar .fmt-size-label{font-size:11px;color:var(--muted);min-width:18px;text-align:center;user-select:none;flex-shrink:0;}
-  .text-toolbar .fmt-sep{width:1px;height:18px;background:#3a3a3a;margin:0 2px;flex-shrink:0;}
+  .text-toolbar .fmt-sep{width:1px;height:18px;background:var(--hover-3);margin:0 2px;flex-shrink:0;}
   .text-toolbar .align-bars{display:flex;flex-direction:column;gap:2px;width:14px;}
   .text-toolbar .align-bars span{display:block;height:2px;background:currentColor;border-radius:1px;}
   .text-toolbar button[data-align="left"] .align-bars{align-items:flex-start;}
@@ -114,34 +131,34 @@
   .text-toolbar .align-bars span:nth-child(3){width:12px;}
 
   .empty-state{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:var(--muted);pointer-events:none;width:380px;}
-  .empty-state h2{color:#555;font-weight:500;font-size:16px;}
+  .empty-state h2{color:var(--muted2);font-weight:500;font-size:16px;}
 
-  #authPanel{position:fixed;top:64px;right:16px;background:var(--panel);border:1px solid #333;border-radius:10px;padding:14px;width:300px;max-width:85vw;z-index:1100;box-shadow:0 8px 24px rgba(0,0,0,.5);display:none;}
+  #authPanel{position:fixed;top:64px;right:16px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;width:300px;max-width:85vw;z-index:1100;box-shadow:0 8px 24px var(--shadow);display:none;}
   #authPanel.open{display:block;}
   #authPanel label{font-size:11px;color:var(--muted);display:block;margin-bottom:4px;}
-  #authPanel input{width:100%;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:7px 9px;border-radius:6px;font-size:12px;margin-bottom:10px;}
-  #authPanel .redirect{font-size:11px;color:var(--accent);word-break:break-all;background:#0f0f0f;padding:6px 8px;border-radius:6px;margin-bottom:10px;}
+  #authPanel input{width:100%;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:7px 9px;border-radius:6px;font-size:12px;margin-bottom:10px;}
+  #authPanel .redirect{font-size:11px;color:var(--accent);word-break:break-all;background:var(--input-bg);padding:6px 8px;border-radius:6px;margin-bottom:10px;}
   #authPanel button{width:100%;}
   #mobileNote{font-size:10px;color:var(--muted);margin-top:8px;line-height:1.4;}
 
   #modalOverlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:2000;}
   #modalOverlay.open{display:flex;}
-  #modalBox{background:var(--panel);border:1px solid #333;border-radius:10px;padding:18px;width:320px;max-width:88vw;box-shadow:0 12px 32px rgba(0,0,0,.6);}
+  #modalBox{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;width:320px;max-width:88vw;box-shadow:0 12px 32px var(--shadow-strong);}
   #modalBox h4{margin:0 0 10px;font-size:14px;color:var(--text);}
   #modalBox p{margin:0 0 10px;font-size:12px;color:var(--muted);line-height:1.4;}
-  #modalBox input{width:100%;background:#0f0f0f;border:1px solid #333;color:var(--text);padding:8px 10px;border-radius:6px;font-size:13px;margin-bottom:14px;}
+  #modalBox input{width:100%;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;font-size:13px;margin-bottom:14px;}
   #modalBox .row{display:flex;gap:8px;justify-content:flex-end;}
   #modalBox .row button{padding:7px 14px;}
-  #modalBox .row button.secondary{background:#2a2a2a;color:#eee;}
-  #modalBox .row button.secondary:hover{background:#3a3a3a;}
+  #modalBox .row button.secondary{background:var(--secondary-bg);color:var(--text);}
+  #modalBox .row button.secondary:hover{background:var(--hover-3);}
 
   #canvasListOverlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:2000;}
   #canvasListOverlay.open{display:flex;}
-  #canvasListBox{background:var(--panel);border:1px solid #333;border-radius:10px;padding:18px;width:380px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 12px 32px rgba(0,0,0,.6);}
+  #canvasListBox{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;width:380px;max-width:90vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 12px 32px var(--shadow-strong);}
   #canvasListBox h4{margin:0 0 10px;font-size:14px;color:var(--text);}
   #canvasListItems{overflow-y:auto;flex:1;margin-bottom:12px;min-height:40px;}
   .canvas-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 8px;border-radius:6px;cursor:pointer;}
-  .canvas-item:hover{background:#252525;}
+  .canvas-item:hover{background:var(--hover-1);}
   .canvas-item-main{overflow:hidden;flex:1;}
   .canvas-item-name{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .canvas-item-date{font-size:11px;color:var(--muted);margin-top:2px;}
@@ -160,6 +177,7 @@
   <button id="saveBtn" class="secondary">Save canvas</button>
   <button id="openBtn" class="secondary">Open canvas</button>
   <button id="authBtn" class="secondary">Connect Spotify</button>
+  <button id="themeToggleBtn" class="secondary" type="button" title="Toggle light/dark mode">☀ Light</button>
   <span id="status">Not connected</span>
   <div id="hint">Scroll to pan · Ctrl/⌘+scroll or pinch to zoom · Drag a card header to move</div>
 </div>
@@ -224,6 +242,10 @@
   const STORAGE_KEY = 'spotify-canvas-cards-v2';
   const CLIENT_ID = 'acc2ce9af512491bb94ce2feb0afa027';
   const TOKENS_KEY = 'spc_tokens';
+  const THEME_KEY = 'spc_theme';
+  let currentTheme = 'dark';
+  try{ currentTheme = localStorage.getItem(THEME_KEY) || 'dark'; }catch(e){}
+  document.documentElement.setAttribute('data-theme', currentTheme);
 
   const canvas = document.getElementById('canvas');
   const viewport = document.getElementById('viewport');
@@ -259,6 +281,7 @@
   const canvasListOverlay = document.getElementById('canvasListOverlay');
   const canvasListItems = document.getElementById('canvasListItems');
   const canvasListCloseBtn = document.getElementById('canvasListCloseBtn');
+  const themeToggleBtn = document.getElementById('themeToggleBtn');
 
   // Small in-app replacements for window.prompt()/alert(): some embedded/preview
   // browser contexts refuse native dialogs outright, and even where supported
@@ -629,6 +652,77 @@
     });
   }
 
+  // Click a sidebar playlist row to preview-play it in place, without placing a card
+  // on the canvas; click the same row again to pause. Desktop reuses the same Spotify
+  // Connect (Web Playback SDK) full-track playback the cards use. Touch/non-SDK falls
+  // back to the 30-second embed preview, sharing ONE hidden controller across every
+  // row (switched between tracks with loadUri) instead of an iframe per row.
+  let sidebarPreviewController = null, sidebarPreviewMount = null;
+  let sidebarPreviewUri = null, sidebarPreviewPlaying = false;
+  const sidebarPreviewRenderers = new Set();
+  function withSidebarPreviewController(uri, cb){
+    if(sidebarPreviewController){
+      if(sidebarPreviewUri !== uri){ sidebarPreviewUri = uri; sidebarPreviewPlaying = false; sidebarPreviewController.loadUri(uri); }
+      cb(sidebarPreviewController);
+      return;
+    }
+    if(!sidebarPreviewMount){
+      sidebarPreviewMount = document.createElement('div');
+      sidebarPreviewMount.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;';
+      document.body.appendChild(sidebarPreviewMount);
+    }
+    const create = () => {
+      IFrameAPI.createController(sidebarPreviewMount, {uri, width:'1', height:'1'}, (c) => {
+        sidebarPreviewController = c;
+        sidebarPreviewUri = uri;
+        c.addListener('playback_update', e => {
+          sidebarPreviewPlaying = !!(e && e.data && e.data.isPaused === false);
+          sidebarPreviewRenderers.forEach(fn => fn());
+        });
+        cb(c);
+      });
+    };
+    if(IFrameAPI) create(); else pendingEmbeds.push({fn: create});
+  }
+
+  function wireTrackPreview(el, trackData){
+    const previewId = 'preview:' + trackData.uri;
+    const useSdk = trackData.full; // already means "!IS_TOUCH" at the point trackData is built
+    function isPlaying(){
+      return useSdk ? (activeCardId === previewId && !sdkPaused)
+                     : (sidebarPreviewUri === trackData.uri && sidebarPreviewPlaying);
+    }
+    function render(){ el.classList.toggle('playing', isPlaying()); }
+    render();
+    if(useSdk) transportRenderers.add(render); else sidebarPreviewRenderers.add(render);
+
+    el.addEventListener('click', async (e) => {
+      if(e.target.closest('.tapadd')) return;
+      if(useSdk){
+        const token = await getValidToken();
+        if(!token) return;
+        if(isPlaying()){
+          await fetch('https://api.spotify.com/v1/me/player/pause', {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+          sdkPaused = true; sdkLastTick = Date.now();
+        } else if(activeCardId === previewId && sdkPaused){
+          await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {method:'PUT', headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+          sdkPaused = false; sdkLastTick = Date.now();
+        } else {
+          activeCardId = previewId;
+          await playFullTrack(trackData.uri, 0);
+          sdkTrackUri = trackData.uri; sdkPosition = 0; sdkDuration = trackData.duration || 0; sdkPaused = false; sdkLastTick = Date.now();
+        }
+        transportRenderers.forEach(fn => fn());
+      } else {
+        withSidebarPreviewController(trackData.uri, (c) => {
+          if(isPlaying()){ c.pause(); sidebarPreviewPlaying = false; }
+          else { c.resume(); sidebarPreviewPlaying = true; }
+          sidebarPreviewRenderers.forEach(fn => fn());
+        });
+      }
+    });
+  }
+
   // ---------- Helpers ----------
   function trackIdFromUri(uri){ return (uri||'').split(':').pop(); }
   function parseTime(str){
@@ -747,7 +841,8 @@
           e.dataTransfer.setData('application/json', JSON.stringify(trackData));
         });
       } else {
-        el.querySelector('.tapadd').addEventListener('click', () => {
+        el.querySelector('.tapadd').addEventListener('click', (e) => {
+          e.stopPropagation();
           const center = viewportCenterToCanvas();
           const x = center.x - 115 + (Math.random()*60-30);
           const y = center.y - 40 + (Math.random()*60-30);
@@ -756,6 +851,7 @@
           viewport.classList.remove('shifted');
         });
       }
+      wireTrackPreview(el, trackData);
       trackList.appendChild(el);
     });
   }
@@ -1366,6 +1462,16 @@
   libraryBtn.addEventListener('click', () => {
     sidebar.classList.toggle('open');
     viewport.classList.toggle('shifted', sidebar.classList.contains('open'));
+  });
+  function updateThemeToggleLabel(){
+    themeToggleBtn.textContent = currentTheme === 'light' ? '☾ Dark' : '☀ Light';
+  }
+  updateThemeToggleLabel();
+  themeToggleBtn.addEventListener('click', () => {
+    currentTheme = currentTheme === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    try{ localStorage.setItem(THEME_KEY, currentTheme); }catch(e){}
+    updateThemeToggleLabel();
   });
 
   // ---------- init ----------
